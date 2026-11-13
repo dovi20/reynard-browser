@@ -251,7 +251,7 @@ final class SitePopupViewController: UIViewController, ContentDelegate, Navigati
         if let url = URL(string: request.uri),
            let scheme = url.scheme?.lowercased(),
            !["http", "https", "about", "data", "blob", "javascript"].contains(scheme) {
-            UIApplication.shared.open(url)
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
             return .deny
         }
 

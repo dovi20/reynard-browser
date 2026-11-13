@@ -365,7 +365,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
                 showError(nil)
             }
         case .openLink(let url):
-            UIApplication.shared.open(url)
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
         }
     }
 
@@ -466,7 +466,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
             if isWebLink, request.isRedirect || !(request.hasUserGesture || request.target != .current) {
                 return .allow
             }
-            UIApplication.shared.open(url)
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
             return .deny
         case .inApp:
             // target=_blank and window.open continue to onNewSession (popup window)
@@ -476,7 +476,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
 
     func onNewSession(session: GeckoSession, uri: String, windowId: String, target: LoadRequestTarget) async -> GeckoSession? {
         if case .external(let url) = configuration.route(for: uri) {
-            UIApplication.shared.open(url)
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
             return nil
         }
 
