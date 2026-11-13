@@ -10,8 +10,12 @@
   "version": "1.0.0",
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -19,6 +23,13 @@
     "geckoViewAddons",
     "nativeMessaging",
     "nativeMessagingFromContent",
+    "webRequest",
     "https://claude.ai/*"
-  ]
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": true
+  }
 }

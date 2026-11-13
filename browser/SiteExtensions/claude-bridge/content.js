@@ -30,9 +30,13 @@
     }
   };
 
-  // A response is in progress while an assistant message is marked as streaming,
-  // or while the "Stop response" button is on screen.
+  // Set by the background script while a completion request is open in this tab.
+  let networkActive = false;
+
+  // A response is in progress while its completion request is open, while an
+  // assistant message is marked as streaming, or while "Stop response" is on screen.
   const isGenerating = () =>
+    networkActive ||
     !!document.querySelector('[data-is-streaming="true"]') ||
     !!document.querySelector('button[aria-label*="stop" i][aria-label*="respon" i]');
 
@@ -103,6 +107,20 @@
     attributeFilter: ["data-is-streaming", "aria-label"],
   });
   setInterval(check, POLL_MS);
+
+  browser.runtime.onMessage.addListener((message) => {
+    if (message && message.type === "network") {
+      networkActive = !!message.active;
+      schedule();
+    }
+  });
+  browser.runtime
+    .sendMessage({ type: "networkState" })
+    .then((state) => {
+      networkActive = !!(state && state.active);
+      schedule();
+    })
+    .catch(() => {});
 
   send({ type: "ready" });
   check();
