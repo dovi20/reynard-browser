@@ -36,6 +36,8 @@ full-screen popup window that keeps the opener (OAuth sign-in works); downloads 
 ### claude.ai extras
 
 When the site is claude.ai, the app installs the built-in `claude-bridge` extension (`browser/SiteExtensions/`,
-copied into the app by `browser/Scripts/AddGecko.sh`). It reports when Claude starts and finishes a response.
+copied into the app by `browser/Scripts/AddGecko.sh`). Gecko only accepts built-in extensions from
+`resource://app/extensions/readerview/`, so `customize-app.sh` moves the bridge into that folder (the site shell has
+no reader mode). It reports when Claude starts and finishes a response.
 While a response is being written and the app goes to the background, the app keeps itself alive (silent audio,
 up to 15 minutes) and posts a local notification with the conversation title and the start of the answer when it is done.

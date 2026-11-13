@@ -301,6 +301,7 @@ jobs:
           plutil -p "$APP/PlugIns/Reynard Helper.appex/Info.plist" | grep CFBundleIdentifier
           ls "$APP/PlugIns"
           test -x "$APP/ts_ptrace_jit"
+          grep '"id"' "$APP/Frameworks/GeckoView.framework/Frameworks/extensions/readerview/manifest.json" || true
           ldid -e "$APP/Reynard" | grep -A1 application-identifier
           ldid -e "$APP/PlugIns/Reynard Helper.appex/Reynard Helper" | grep -A1 application-identifier
 

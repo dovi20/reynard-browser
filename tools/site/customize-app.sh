@@ -65,5 +65,15 @@ set_string NSBluetoothAlwaysUsageDescription "$SITE_NAME uses Bluetooth when the
 # "Open in Reynard" share extension has no place in a single-site app
 rm -rf "$APP_PATH/PlugIns/OpenIn.appex"
 
+# Gecko accepts built-in extensions only from resource://app/extensions/readerview/
+# (patches/mobile/shared/modules/geckoview/GeckoViewWebExtension.sys.mjs.patch).
+# The site shell has no reader mode, so the site bridge takes that slot.
+EXTENSIONS_DIR="$APP_PATH/Frameworks/GeckoView.framework/Frameworks/extensions"
+if [ -d "$EXTENSIONS_DIR/claude-bridge" ]; then
+	rm -rf "$EXTENSIONS_DIR/readerview"
+	mv "$EXTENSIONS_DIR/claude-bridge" "$EXTENSIONS_DIR/readerview"
+	echo "Site bridge installed in the readerview extension slot"
+fi
+
 echo "Customized $(basename "$APP_PATH") for $SITE_URL as \"$SITE_NAME\""
 plutil -p "$INFO_PLIST" | grep -E 'CFBundle(Identifier|DisplayName|Name)|ReynardSite' || true

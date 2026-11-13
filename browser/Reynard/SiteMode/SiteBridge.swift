@@ -15,7 +15,10 @@ import UserNotifications
 
 final class SiteBridge: AddonMessageDelegate {
     static let extensionID = "claude-bridge@reynard.site"
-    static let extensionLocation = "resource://app/extensions/claude-bridge/"
+    // Gecko only installs built-in extensions from this exact folder (see
+    // GeckoViewWebExtension.sys.mjs.patch); site builds put the bridge there
+    // in place of reader mode (tools/site/customize-app.sh).
+    static let extensionLocation = "resource://app/extensions/readerview/"
     static let nativeApp = "reynard_site_bridge"
 
     private enum UX {
@@ -41,6 +44,7 @@ final class SiteBridge: AddonMessageDelegate {
     // MARK: - Setup
 
     func start() {
+        requestAuthorizationIfNeeded()
         Task {
             do {
                 _ = try await AddonRuntime.shared.ensureBuiltIn(

@@ -20,10 +20,12 @@
     }
   ],
   "permissions": [
+    "mozillaAddons",
     "geckoViewAddons",
     "nativeMessaging",
     "nativeMessagingFromContent",
     "webRequest",
+    "tabs",
     "https://claude.ai/*"
   ],
   "background": {
