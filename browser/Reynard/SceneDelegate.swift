@@ -13,6 +13,19 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = (scene as? UIWindowScene) else { return }
         
+        if let siteConfiguration = SiteConfiguration.current {
+            let siteViewController = SiteViewController(configuration: siteConfiguration)
+            siteViewController.setApplicationForeground(scene.activationState != .background)
+            
+            let window = UIWindow(windowScene: windowScene)
+            window.rootViewController = siteViewController
+            window.makeKeyAndVisible()
+            self.window = window
+            
+            handleIncomingURLContexts(connectionOptions.urlContexts)
+            return
+        }
+        
         let browserViewController = BrowserViewController()
         browserViewController.sessionManager.setApplicationForeground(scene.activationState != .background)
         
@@ -32,6 +45,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneDidDisconnect(_ scene: UIScene) {}
     
     func sceneDidBecomeActive(_ scene: UIScene) {
+        if let siteViewController = window?.rootViewController as? SiteViewController {
+            siteViewController.applicationDidBecomeActive()
+            return
+        }
+        
         guard let browserViewController = window?.rootViewController as? BrowserViewController else {
             return
         }
@@ -42,6 +60,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     
     func sceneWillResignActive(_ scene: UIScene) {
+        if let siteViewController = window?.rootViewController as? SiteViewController {
+            siteViewController.applicationWillResignActive()
+            return
+        }
+        
         guard let browserViewController = window?.rootViewController as? BrowserViewController else {
             return
         }
@@ -61,11 +84,13 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     
     func sceneWillEnterForeground(_ scene: UIScene) {
+        (window?.rootViewController as? SiteViewController)?.setApplicationForeground(true)
         (window?.rootViewController as? BrowserViewController)?
             .sessionManager.setApplicationForeground(true)
     }
     
     func sceneDidEnterBackground(_ scene: UIScene) {
+        (window?.rootViewController as? SiteViewController)?.setApplicationForeground(false)
         (window?.rootViewController as? BrowserViewController)?
             .sessionManager.setApplicationForeground(false)
     }
@@ -78,6 +103,15 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     
     private func handleIncomingURL(_ incomingURL: URL) {
+        if let siteViewController = window?.rootViewController as? SiteViewController {
+            if let resolvedURL = resolvedBrowserURL(from: incomingURL) {
+                DispatchQueue.main.async {
+                    siteViewController.open(resolvedURL)
+                }
+            }
+            return
+        }
+        
         guard let browserViewController = window?.rootViewController as? BrowserViewController,
               let resolvedURL = resolvedBrowserURL(from: incomingURL) else {
             return

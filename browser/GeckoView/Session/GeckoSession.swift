@@ -574,6 +574,13 @@ public class GeckoSession {
         return (bottomRatio, caretTop.map { $0 / engineView.contentScaleFactor })
     }
     
+    /// Asks Gecko to scroll/zoom the focused input into view after the next
+    /// viewport resize (same event GeckoView on Android sends when the soft
+    /// keyboard resizes the view).
+    public func zoomToFocusedInput(force: Bool = false) {
+        dispatcher.dispatch(type: "GeckoView:ZoomToInput", message: ["force": force])
+    }
+
     @discardableResult
     public func focusForHardwareKeyboard() -> Bool {
         return window?.focusForHardwareKeyboard() ?? false

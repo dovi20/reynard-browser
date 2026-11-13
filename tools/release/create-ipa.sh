@@ -11,18 +11,22 @@ APP_DIR="$ARCHIVE_DIR/Products/Applications"
 WORK_DIR="$ROOT_DIR/dist/Reynard"
 
 BUILD_TYPE="${1:-normal}"
+
+# Single-site builds override these (see tools/site/customize-app.sh)
+APP_BUNDLE_ID="${REYNARD_BUNDLE_ID:-com.minh-ton.Reynard}"
+OUTPUT_BASENAME="${REYNARD_OUTPUT_BASENAME:-Reynard}"
 case "$BUILD_TYPE" in
 	--trollstore)
-		OUTPUT_NAME="Reynard-TrollStore.tipa"
+		OUTPUT_NAME="$OUTPUT_BASENAME-TrollStore.tipa"
 		PTRACE_JIT_NAME="ts_ptrace_jit"
 		;;
 	--jailbroken)
-		OUTPUT_NAME="Reynard-Jailbroken.ipa"
+		OUTPUT_NAME="$OUTPUT_BASENAME-Jailbroken.ipa"
 		PTRACE_JIT_NAME="jb_ptrace_jit"
 		;;
 	*)
 		BUILD_TYPE="normal"
-		OUTPUT_NAME="Reynard.ipa"
+		OUTPUT_NAME="$OUTPUT_BASENAME.ipa"
 		;;
 esac
 
@@ -42,13 +46,28 @@ fi
 
 # I absolutely hate Apple for this
 # Why is my bundle identifier just become unavailable for no reason?
-plutil -replace CFBundleIdentifier -string "com.minh-ton.Reynard" "$APP_PATH/Info.plist"
-plutil -replace CFBundleIdentifier -string "com.minh-ton.Reynard.Helper" "$APP_PATH/PlugIns/Reynard Helper.appex/Info.plist"
-plutil -replace CFBundleIdentifier -string "com.minh-ton.Reynard.OpenIn" "$APP_PATH/PlugIns/OpenIn.appex/Info.plist"
+plutil -replace CFBundleIdentifier -string "$APP_BUNDLE_ID" "$APP_PATH/Info.plist"
+plutil -replace CFBundleIdentifier -string "$APP_BUNDLE_ID.Helper" "$APP_PATH/PlugIns/Reynard Helper.appex/Info.plist"
+if [ -d "$APP_PATH/PlugIns/OpenIn.appex" ]; then
+	plutil -replace CFBundleIdentifier -string "$APP_BUNDLE_ID.OpenIn" "$APP_PATH/PlugIns/OpenIn.appex/Info.plist"
+fi
 
 rm -rf "$WORK_DIR" "$ROOT_DIR/dist/$OUTPUT_NAME"
 mkdir -p "$WORK_DIR/Payload"
 cp -R "$APP_PATH" "$WORK_DIR/Payload/"
+
+if [ -n "${REYNARD_SITE_URL:-}" ]; then
+	"$ROOT_DIR/tools/site/customize-app.sh" "$WORK_DIR/Payload/Reynard.app"
+fi
+
+# Entitlements carry the application-identifier, so keep them in step with the bundle ID
+ENTITLEMENTS_DIR="$ROOT_DIR/dist/entitlements"
+rm -rf "$ENTITLEMENTS_DIR"
+mkdir -p "$ENTITLEMENTS_DIR"
+cp "$ROOT_DIR/browser/Reynard/Entitlements/Reynard.private.entitlements" "$ENTITLEMENTS_DIR/app.entitlements"
+cp "$ROOT_DIR/browser/Helper/Entitlements/Reynard-Helper.private.entitlements" "$ENTITLEMENTS_DIR/helper.entitlements"
+plutil -replace application-identifier -string "$APP_BUNDLE_ID" "$ENTITLEMENTS_DIR/app.entitlements"
+plutil -replace application-identifier -string "$APP_BUNDLE_ID.Helper" "$ENTITLEMENTS_DIR/helper.entitlements"
 
 cd "$WORK_DIR"
 
@@ -66,8 +85,8 @@ if [ "$BUILD_TYPE" != "normal" ]; then
 
 	chmod 0755 "$PTRACE_JIT_OUT"
 	ldid -S"$ROOT_DIR/browser/Reynard/JIT/Unsandboxed/ptrace_jit.entitlements" "$PTRACE_JIT_OUT"
-	ldid -S"$ROOT_DIR/browser/Reynard/Entitlements/Reynard.private.entitlements" "Payload/Reynard.app/Reynard"
-	ldid -S"$ROOT_DIR/browser/Helper/Entitlements/Reynard-Helper.private.entitlements" "Payload/Reynard.app/PlugIns/Reynard Helper.appex/Reynard Helper"
+	ldid -S"$ENTITLEMENTS_DIR/app.entitlements" "Payload/Reynard.app/Reynard"
+	ldid -S"$ENTITLEMENTS_DIR/helper.entitlements" "Payload/Reynard.app/PlugIns/Reynard Helper.appex/Reynard Helper"
 fi
 
 if [ "$BUILD_TYPE" = "--jailbroken" ]; then

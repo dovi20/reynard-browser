@@ -1,0 +1,246 @@
+name: Build Site App
+
+run-name: "Site app: ${{ inputs.site_url }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: Website URL (https://...)
+        required: true
+        type: string
+      app_name:
+        description: Name under the home-screen icon (empty = site host)
+        required: false
+        default: ''
+        type: string
+      bundle_id:
+        description: Bundle ID (empty = derived from the host, e.g. site.com.example)
+        required: false
+        default: ''
+        type: string
+      allowed_hosts:
+        description: Extra hosts that stay inside the app, comma separated (e.g. login/payment domains)
+        required: false
+        default: ''
+        type: string
+      external_links_in_safari:
+        description: Open links to other websites in Safari
+        required: false
+        default: true
+        type: boolean
+      icon_url:
+        description: Icon image URL (empty = the site's apple-touch-icon)
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-app-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build TrollStore .tipa
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_VERSION: standard
+      GECKO_CACHE_DIR: ${{ github.workspace }}/gecko-cache
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Resolve app identity
+        id: identity
+        env:
+          SITE_URL: ${{ inputs.site_url }}
+          APP_NAME: ${{ inputs.app_name }}
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+        run: |
+          set -eu
+          case "$SITE_URL" in
+            http://*|https://*) ;;
+            *) SITE_URL="https://$SITE_URL" ;;
+          esac
+          HOST="$(printf '%s' "$SITE_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/?#].*$##; s#:.*$##' | tr 'A-Z' 'a-z')"
+          SHORT_HOST="${HOST#www.}"
+          if [ -z "$BUNDLE_ID" ]; then
+            REVERSED="$(printf '%s' "$SHORT_HOST" | awk -F. '{for (i=NF; i>0; i--) printf "%s%s", $i, (i>1 ? "." : "")}')"
+            BUNDLE_ID="site.$(printf '%s' "$REVERSED" | sed -E 's/[^a-z0-9.-]/-/g')"
+          fi
+          OUTPUT_BASENAME="$(printf '%s' "$SHORT_HOST" | sed -E 's/[^a-z0-9.-]/-/g')"
+          {
+            echo "site_url=$SITE_URL"
+            echo "app_name=${APP_NAME:-$SHORT_HOST}"
+            echo "bundle_id=$BUNDLE_ID"
+            echo "output_basename=$OUTPUT_BASENAME"
+          } >> "$GITHUB_OUTPUT"
+          echo "Site: $SITE_URL"
+          echo "Name: ${APP_NAME:-$SHORT_HOST}"
+          echo "Bundle ID: $BUNDLE_ID"
+
+      - name: Set up latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.6'
+
+      - name: Restore prebuilt Gecko
+        id: gecko-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: gecko-cache
+          key: gecko-dist-${{ hashFiles('engine/release.txt', 'patches/**', 'tools/development/build-gecko.sh', 'tools/development/apply-patches.sh', 'tools/development/update-gecko.sh') }}
+
+      # ---------- Full Gecko build (only when the cache above missed) ----------
+
+      - name: Install build dependencies
+        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        run: |
+          brew install python@3.12 lld cbindgen llvm
+          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch and patch Gecko source
+        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --depth 1 engine/firefox
+          ./tools/development/update-gecko.sh
+          ./tools/development/apply-patches.sh
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Hash Rust toolchain for cache
+        id: rust_toolchain
+        run: echo "hash=$(rustc -Vv | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Gecko dependency cache
+        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.mozbuild
+          key: buildcache-gecko-deps-standard-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('engine/release.txt') }}
+          restore-keys: |
+            buildcache-gecko-deps-standard-${{ steps.rust_toolchain.outputs.hash }}-
+
+      - name: Set up sccache
+        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Build Gecko
+        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        env:
+          CC: clang
+          CXX: clang++
+          LD: ld64.lld
+          MOZ_NOSPAM: "1"
+        run: ./tools/development/build-gecko.sh --use-sccache --auto-clobber
+
+      - name: Package Gecko for reuse
+        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          rm -rf "$GECKO_CACHE_DIR"
+          mkdir -p "$GECKO_CACHE_DIR"
+          # Dereference symlinks so the cache works without the Gecko source/objdir
+          rsync -rtL --exclude 'Test*' --exclude 'test_*' --exclude '*_unittest' \
+            engine/firefox/obj-aarch64-apple-ios/dist/ "$GECKO_CACHE_DIR/dist/" || [ $? -eq 23 ]
+          rsync -rtL engine/firefox/toolkit/mozapps/extensions/default-theme/ "$GECKO_CACHE_DIR/default-theme/"
+          du -sh "$GECKO_CACHE_DIR"
+
+      - name: Save prebuilt Gecko
+        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: gecko-cache
+          key: ${{ steps.gecko-cache.outputs.cache-primary-key }}
+
+      # ---------- App build ----------
+
+      - name: Use prebuilt Gecko
+        if: steps.gecko-cache.outputs.cache-hit == 'true'
+        run: |
+          set -eu
+          mkdir -p engine/firefox/obj-aarch64-apple-ios engine/firefox/toolkit/mozapps/extensions
+          rm -rf engine/firefox/obj-aarch64-apple-ios/dist engine/firefox/toolkit/mozapps/extensions/default-theme
+          ln -s "$GECKO_CACHE_DIR/dist" engine/firefox/obj-aarch64-apple-ios/dist
+          ln -s "$GECKO_CACHE_DIR/default-theme" engine/firefox/toolkit/mozapps/extensions/default-theme
+
+      - name: Restore idevice build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            support/idevice/target
+            browser/Reynard/JIT/RPPairing/libidevice_ffi.a
+          key: buildcache-idevice-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('support/idevice/Cargo.lock', 'support/idevice/Cargo.toml', 'tools/development/build-idevice.sh') }}
+          restore-keys: |
+            buildcache-idevice-${{ steps.rust_toolchain.outputs.hash }}-
+
+      - name: Build idevice support library
+        run: |
+          git submodule update --init --recursive support/idevice
+          ./tools/development/build-idevice.sh
+
+      - name: Install packaging dependencies
+        run: |
+          brew install ldid
+          python3 -m pip install --break-system-packages --quiet pillow || python3 -m pip install --quiet pillow
+
+      - name: Set app icon
+        env:
+          SITE_URL: ${{ steps.identity.outputs.site_url }}
+          ICON_URL: ${{ inputs.icon_url }}
+        run: python3 tools/site/set-icon.py "$SITE_URL" "$ICON_URL"
+
+      - name: Build app
+        run: ./tools/release/build-app.sh --no-signing
+
+      - name: Create TrollStore TIPA
+        env:
+          REYNARD_SITE_URL: ${{ steps.identity.outputs.site_url }}
+          REYNARD_SITE_NAME: ${{ steps.identity.outputs.app_name }}
+          REYNARD_SITE_ALLOWED_HOSTS: ${{ inputs.allowed_hosts }}
+          REYNARD_SITE_EXTERNAL_LINKS: ${{ inputs.external_links_in_safari }}
+          REYNARD_BUNDLE_ID: ${{ steps.identity.outputs.bundle_id }}
+          REYNARD_OUTPUT_BASENAME: ${{ steps.identity.outputs.output_basename }}
+        run: ./tools/release/create-ipa.sh --trollstore
+
+      - name: Inspect package
+        env:
+          OUTPUT_BASENAME: ${{ steps.identity.outputs.output_basename }}
+        run: |
+          set -eu
+          TIPA="dist/$OUTPUT_BASENAME-TrollStore.tipa"
+          ls -lh "$TIPA"
+          rm -rf dist/inspect && mkdir -p dist/inspect && cd dist/inspect
+          unzip -q "../$OUTPUT_BASENAME-TrollStore.tipa"
+          APP=Payload/Reynard.app
+          plutil -p "$APP/Info.plist" | grep -E 'CFBundle(Identifier|DisplayName|Name)|ReynardSite'
+          plutil -p "$APP/PlugIns/Reynard Helper.appex/Info.plist" | grep CFBundleIdentifier
+          ls "$APP/PlugIns"
+          test -x "$APP/ts_ptrace_jit"
+          ldid -e "$APP/Reynard" | grep -A1 application-identifier
+          ldid -e "$APP/PlugIns/Reynard Helper.appex/Reynard Helper" | grep -A1 application-identifier
+
+      - name: Upload TrollStore TIPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.identity.outputs.output_basename }}-TrollStore.tipa
+          path: dist/${{ steps.identity.outputs.output_basename }}-TrollStore.tipa
+          if-no-files-found: error
