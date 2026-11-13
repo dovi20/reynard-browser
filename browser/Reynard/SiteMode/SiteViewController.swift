@@ -34,6 +34,10 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         )
     )
 
+    private let bridge: SiteBridge?
+    private weak var popupViewController: SitePopupViewController?
+    private var pendingDownloads: [String: String] = [:]
+
     private var session: GeckoSession?
     private var lastURL: String?
     private var canGoBack = false
@@ -50,6 +54,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
 
     init(configuration: SiteConfiguration) {
         self.configuration = configuration
+        self.bridge = SiteBridge.supports(configuration) ? SiteBridge() : nil
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -78,6 +83,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         view.backgroundColor = pageBackgroundColor
 
         RuntimePreferences.apply() // Gecko prefs
+        bridge?.start()
 
         configureHierarchy()
         configureBackSwipe()
@@ -98,6 +104,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
 
     func applicationDidBecomeActive() {
         sessionManager.applicationDidBecomeActive()
+        bridge?.applicationDidBecomeActive()
         if needsSessionRecovery {
             recoverSession()
         }
@@ -105,6 +112,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
 
     func applicationWillResignActive() {
         sessionManager.applicationWillResignActive()
+        bridge?.applicationWillResignActive()
     }
 
     func open(_ url: URL) {
@@ -137,6 +145,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
                 selectionAction: selectionActionCoordinator
             )
         )
+        bridge?.attach(to: session)
         sessionManager.open(session)
         geckoView.session = session
         sessionManager.activate(session)
@@ -451,27 +460,105 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     func onLoadRequest(session: GeckoSession, request: LoadRequest) async -> AllowOrDeny {
         switch configuration.route(for: request.uri) {
         case .external(let url):
+            let isWebLink = url.scheme?.lowercased().hasPrefix("http") == true
+            // Server redirects and script hops (sign-in flows) stay in the app;
+            // links the user taps to other websites open in Safari.
+            if isWebLink, request.isRedirect || !(request.hasUserGesture || request.target != .current) {
+                return .allow
+            }
             UIApplication.shared.open(url)
             return .deny
         case .inApp:
-            guard request.target != .current else {
-                return .allow
-            }
-            // target=_blank and friends: keep it in the single window.
-            session.load(request.uri)
-            return .deny
+            // target=_blank and window.open continue to onNewSession (popup window)
+            return .allow
         }
     }
 
     func onNewSession(session: GeckoSession, uri: String, windowId: String, target: LoadRequestTarget) async -> GeckoSession? {
-        switch configuration.route(for: uri) {
-        case .external(let url):
+        if case .external(let url) = configuration.route(for: uri) {
             UIApplication.shared.open(url)
-        case .inApp:
-            if !uri.isEmpty, !uri.hasPrefix("about:blank") {
-                session.load(uri)
-            }
+            return nil
         }
-        return nil
+
+        popupViewController?.close()
+        let popupSession = sessionManager.createSession(
+            url: uri,
+            tabID: nil,
+            isPrivate: false,
+            opening: .external,
+            delegates: SessionDelegates()
+        )
+        permissionCoordinator.restorePermissions(for: popupSession, at: uri)
+        let popup = SitePopupViewController(
+            session: popupSession,
+            sessionManager: sessionManager,
+            initialURL: uri
+        )
+        popupViewController = popup
+        // Gecko opens the returned session with the requested window id; present right after.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.topPresenter.present(popup, animated: true)
+        }
+        return popupSession
+    }
+
+    private var topPresenter: UIViewController {
+        var presenter: UIViewController = self
+        while let presented = presenter.presentedViewController, !presented.isBeingDismissed {
+            presenter = presented
+        }
+        return presenter
+    }
+
+    // MARK: - Downloads
+
+    func onExternalResponse(session: GeckoSession, response: ExternalResponseInfo) async -> Bool {
+        let fallbackName = URL(string: response.url)?.lastPathComponent
+        let name = [response.filename, fallbackName]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty && $0 != "/" } ?? "download"
+        pendingDownloads[response.localFilePath] = name
+        sessionManager.retainExternalResponse(for: session)
+        return true
+    }
+
+    func onExternalResponseProgress(session: GeckoSession, localFilePath: String, bytesReceived: Int64) -> Bool {
+        return pendingDownloads[localFilePath] != nil
+    }
+
+    func onExternalResponseComplete(session: GeckoSession, localFilePath: String, succeeded: Bool) {
+        sessionManager.releaseExternalResponse(for: session)
+        guard let name = pendingDownloads.removeValue(forKey: localFilePath), succeeded else {
+            return
+        }
+        presentDownloadedFile(at: localFilePath, named: name)
+    }
+
+    private func presentDownloadedFile(at path: String, named name: String) {
+        let fileManager = FileManager.default
+        let safeName = name.replacingOccurrences(of: "/", with: "_")
+        let folder = fileManager.temporaryDirectory
+            .appendingPathComponent("Downloads", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destination = folder.appendingPathComponent(safeName)
+        do {
+            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+            try fileManager.copyItem(at: URL(fileURLWithPath: path), to: destination)
+        } catch {
+            NSLog("Site download: failed to prepare %@: %@", safeName, "\(error)")
+            return
+        }
+
+        let activity = UIActivityViewController(activityItems: [destination], applicationActivities: nil)
+        let presenter = topPresenter
+        if let popover = activity.popoverPresentationController {
+            popover.sourceView = presenter.view
+            popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 1, height: 1)
+            popover.permittedArrowDirections = []
+        }
+        presenter.present(activity, animated: true)
     }
 }

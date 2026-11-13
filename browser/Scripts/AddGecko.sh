@@ -36,5 +36,11 @@ mkdir -p "${GECKOVIEW_FW_FRAMEWORKS}/default-theme"
 cp -RfL "${DEFAULT_THEME_SRC}/" "${GECKOVIEW_FW_FRAMEWORKS}/default-theme/"
 echo "resource default-theme file:default-theme/" >> "${GECKOVIEW_FW_FRAMEWORKS}/chrome.manifest"
 
+# built-in extensions for single-site apps, served as resource://app/extensions/<name>/
+if [ -d "${SRCROOT}/SiteExtensions" ]; then
+	mkdir -p "${GECKOVIEW_FW_FRAMEWORKS}/extensions"
+	cp -Rf "${SRCROOT}/SiteExtensions/" "${GECKOVIEW_FW_FRAMEWORKS}/extensions/"
+fi
+
 # sign the GeckoView.framework
 codesign --force --sign "${SIGN_IDENTITY}" "${GECKOVIEW_FW}"

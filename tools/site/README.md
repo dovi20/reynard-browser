@@ -29,5 +29,13 @@ The result is the `<host>-TrollStore.tipa` artifact of the run. Install it with 
 - `tools/site/set-icon.py` – replaces `AppIcon.appiconset` before the Xcode build.
 - `create-ipa.sh` reads `REYNARD_BUNDLE_ID` and rewrites the `application-identifier` entitlements to match.
 
-In the app: edge swipe goes back, links to other hosts follow `external_links_in_safari`, `tel:`/`mailto:`/app links
-open their apps, `target=_blank` and `window.open` stay in the same window, and downloads are not supported.
+In the app: edge swipe goes back; links the user taps to other hosts follow `external_links_in_safari` (redirects and
+sign-in hops stay in the app); `tel:`/`mailto:`/app links open their apps; `target=_blank` and `window.open` open a
+full-screen popup window that keeps the opener (OAuth sign-in works); downloads open the share sheet (Save to Files).
+
+### claude.ai extras
+
+When the site is claude.ai, the app installs the built-in `claude-bridge` extension (`browser/SiteExtensions/`,
+copied into the app by `browser/Scripts/AddGecko.sh`). It reports when Claude starts and finishes a response.
+While a response is being written and the app goes to the background, the app keeps itself alive (silent audio,
+up to 15 minutes) and posts a local notification with the conversation title and the start of the answer when it is done.
