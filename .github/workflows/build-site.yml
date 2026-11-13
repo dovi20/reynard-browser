@@ -36,7 +36,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write  # publishes the prebuilt engine as a release asset
 
 concurrency:
   group: site-app-${{ github.ref }}
@@ -51,6 +51,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       SCCACHE_GHA_VERSION: standard
       GECKO_CACHE_DIR: ${{ github.workspace }}/gecko-cache
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Check out repository
@@ -100,10 +101,35 @@ jobs:
           path: gecko-cache
           key: gecko-dist-${{ hashFiles('engine/release.txt', 'patches/**', 'tools/development/build-gecko.sh', 'tools/development/apply-patches.sh', 'tools/development/update-gecko.sh') }}
 
+      # The Actions cache is evicted after a week without use; the same engine is
+      # also kept as a release asset (engine-<hash>), which never expires.
+      - name: Find prebuilt Gecko
+        id: engine
+        env:
+          CACHE_HIT: ${{ steps.gecko-cache.outputs.cache-hit }}
+          ENGINE_KEY: ${{ hashFiles('engine/release.txt', 'patches/**', 'tools/development/build-gecko.sh', 'tools/development/apply-patches.sh', 'tools/development/update-gecko.sh') }}
+        run: |
+          TAG="engine-$(printf '%s' "$ENGINE_KEY" | cut -c1-16)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "$CACHE_HIT" = "true" ]; then
+            echo "source=cache" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p gecko-cache.tar.gz -D "$RUNNER_TEMP" 2>/dev/null; then
+            mkdir -p "$GECKO_CACHE_DIR"
+            tar -xzf "$RUNNER_TEMP/gecko-cache.tar.gz" -C "$GECKO_CACHE_DIR"
+            rm -f "$RUNNER_TEMP/gecko-cache.tar.gz"
+            echo "source=release" >> "$GITHUB_OUTPUT"
+            echo "Prebuilt Gecko restored from release $TAG"
+          else
+            echo "source=build" >> "$GITHUB_OUTPUT"
+            echo "No prebuilt Gecko for $TAG; building it"
+          fi
+
       # ---------- Full Gecko build (only when the cache above missed) ----------
 
       - name: Install build dependencies
-        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        if: steps.engine.outputs.source == 'build'
         run: |
           brew install python@3.12 lld cbindgen llvm
           echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
@@ -111,7 +137,7 @@ jobs:
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
 
       - name: Fetch and patch Gecko source
-        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        if: steps.engine.outputs.source == 'build'
         run: |
           git submodule sync --recursive
           git submodule update --init --depth 1 engine/firefox
@@ -128,7 +154,7 @@ jobs:
         run: echo "hash=$(rustc -Vv | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Restore Gecko dependency cache
-        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        if: steps.engine.outputs.source == 'build'
         uses: actions/cache@v4
         with:
           path: |
@@ -140,11 +166,11 @@ jobs:
             buildcache-gecko-deps-standard-${{ steps.rust_toolchain.outputs.hash }}-
 
       - name: Set up sccache
-        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        if: steps.engine.outputs.source == 'build'
         uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Build Gecko
-        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        if: steps.engine.outputs.source == 'build'
         env:
           CC: clang
           CXX: clang++
@@ -153,7 +179,7 @@ jobs:
         run: ./tools/development/build-gecko.sh --use-sccache --auto-clobber
 
       - name: Package Gecko for reuse
-        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        if: steps.engine.outputs.source == 'build'
         run: |
           set -eu
           rm -rf "$GECKO_CACHE_DIR"
@@ -165,16 +191,34 @@ jobs:
           du -sh "$GECKO_CACHE_DIR"
 
       - name: Save prebuilt Gecko
-        if: steps.gecko-cache.outputs.cache-hit != 'true'
+        if: steps.engine.outputs.source == 'build'
         uses: actions/cache/save@v4
         with:
           path: gecko-cache
           key: ${{ steps.gecko-cache.outputs.cache-primary-key }}
 
+      - name: Publish prebuilt Gecko to release
+        continue-on-error: true
+        env:
+          TAG: ${{ steps.engine.outputs.tag }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already has the engine"
+            exit 0
+          fi
+          tar -czf "$RUNNER_TEMP/gecko-cache.tar.gz" -C "$GECKO_CACHE_DIR" .
+          ls -lh "$RUNNER_TEMP/gecko-cache.tar.gz"
+          gh release create "$TAG" "$RUNNER_TEMP/gecko-cache.tar.gz" \
+            -R "$GITHUB_REPOSITORY" \
+            --title "Prebuilt Gecko ($TAG)" \
+            --notes "Gecko build output (dist + default theme) used by the Build Site App workflow, so app builds can skip the multi-hour engine build." \
+            --prerelease
+          rm -f "$RUNNER_TEMP/gecko-cache.tar.gz"
+
       # ---------- App build ----------
 
       - name: Use prebuilt Gecko
-        if: steps.gecko-cache.outputs.cache-hit == 'true'
+        if: steps.engine.outputs.source != 'build'
         run: |
           set -eu
           mkdir -p engine/firefox/obj-aarch64-apple-ios engine/firefox/toolkit/mozapps/extensions
@@ -209,7 +253,29 @@ jobs:
         run: python3 tools/site/set-icon.py "$SITE_URL" "$ICON_URL"
 
       - name: Build app
-        run: ./tools/release/build-app.sh --no-signing
+        run: |
+          set -o pipefail
+          ./tools/release/build-app.sh --no-signing 2>&1 | tee build-app.log
+
+      - name: Show build errors
+        if: failure()
+        run: |
+          if [ -f build-app.log ]; then
+            echo "::group::Errors"
+            grep -n -E "error:|\*\* (ARCHIVE|BUILD) FAILED|The following build commands failed|PhaseScriptExecution" -A4 build-app.log | grep -v "nullability" | head -300 || true
+            echo "::endgroup::"
+            echo "::group::Last 150 lines"
+            tail -150 build-app.log
+            echo "::endgroup::"
+          fi
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-app.log
+          path: build-app.log
+          if-no-files-found: ignore
 
       - name: Create TrollStore TIPA
         env:
