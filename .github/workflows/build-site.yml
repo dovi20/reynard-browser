@@ -310,3 +310,22 @@ jobs:
           name: ${{ steps.identity.outputs.output_basename }}-TrollStore.tipa
           path: dist/${{ steps.identity.outputs.output_basename }}-TrollStore.tipa
           if-no-files-found: error
+
+      # Stable download link for the phone:
+      # https://github.com/<owner>/<repo>/releases/download/app-<host>/<host>-TrollStore.tipa
+      - name: Publish TIPA to release
+        env:
+          OUTPUT_BASENAME: ${{ steps.identity.outputs.output_basename }}
+          APP_NAME: ${{ steps.identity.outputs.app_name }}
+          SITE_URL: ${{ steps.identity.outputs.site_url }}
+        run: |
+          TAG="app-$OUTPUT_BASENAME"
+          TIPA="dist/$OUTPUT_BASENAME-TrollStore.tipa"
+          NOTES="$APP_NAME ($SITE_URL) for TrollStore. Built $(date -u '+%Y-%m-%d %H:%M UTC') from ${GITHUB_SHA::7}."
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$TIPA" -R "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes "$NOTES"
+          else
+            gh release create "$TAG" "$TIPA" -R "$GITHUB_REPOSITORY" --title "$APP_NAME for TrollStore" --notes "$NOTES"
+          fi
+          echo "Download: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$OUTPUT_BASENAME-TrollStore.tipa"
