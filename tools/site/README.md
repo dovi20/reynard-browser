@@ -1,4 +1,6 @@
-# Site apps (TrollStore)
+# Site apps: technical notes
+
+What the project is and how to use it is in the [main README](../../README.md). This page is for working on the code.
 
 Builds a TrollStore `.tipa` that opens websites full-screen on Gecko, with no browser UI:
 
@@ -37,8 +39,9 @@ JIT is enabled automatically (ptrace).
     `SceneDelegate` uses it whenever Info.plist lists sites. Without them the app is the normal Reynard browser.
   - `SiteViewController.swift` – one site: Gecko session, loading screen, keyboard, errors, popups, downloads.
   - `SiteActivityCenter.swift` – background keep-alive and "response finished" notifications.
-- `browser/SiteExtensions/site-bridge/` – built-in extension that reports when a site starts and finishes writing
-  a response. Copied into the app by `browser/Scripts/AddGecko.sh`. Gecko only accepts built-in extensions from
+- `browser/SiteExtensions/site-bridge/` – built-in extension: `content.js` and `background.js` report when a site
+  starts and finishes writing a response; `notifications.js` replaces `window.Notification` in the page (Gecko on iOS
+  has no backend for it) and hands the site's notifications to the app. Copied into the app by `browser/Scripts/AddGecko.sh`. Gecko only accepts built-in extensions from
   `resource://app/extensions/readerview/`, so `customize-app.sh` moves the bridge into that folder (site apps have
   no reader mode). Gecko reinstalls it only when the manifest `version` changes, so bump it with every change.
 - `tools/site/set-icon.py` – sets `AppIcon.appiconset` before the Xcode build and exports the icons the app shows
@@ -57,8 +60,12 @@ JIT is enabled automatically (ptrace).
 - While a site is writing a response and the app goes to the background, the app keeps itself alive (silent audio,
   up to 15 minutes) and posts a local notification when the response is done. Detection: a known chat request
   (Claude, ChatGPT, Z.ai) or, on other sites, a POST answered with an event stream.
-- TrollStore registers apps as system apps, and iOS does not appear to show the "allow notifications" prompt for
-  those; check Settings → Notifications and the status sheet below.
+- TrollStore registers apps as system apps. iOS shows no "allow notifications" alert for those, and TrollStore's
+  author points to the Info.plist key `SBAppUsesLocalNotifications` for system apps that post local notifications
+  (set by `customize-app.sh`; not yet confirmed to be what was missing).
+  The app therefore asks its own question on first launch, and shows an in-app question when a site calls
+  `Notification.requestPermission()`. A site notification and the app's own "response finished" notification for
+  the same site within 8 seconds count as one.
 - **App menu**: long-press with two fingers anywhere (in a hub also: long-press a site in the switcher) for Start page,
   Reload, and "Notifications and status", which shows what the app knows (permission, bridge extension, last event)
   and can send a test notification.

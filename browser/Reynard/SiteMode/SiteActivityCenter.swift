@@ -6,6 +6,8 @@
 //  The extension reports when a site starts and finishes writing a response; this
 //  keeps the app alive in the background while a response is being written and
 //  posts a local notification when it finishes and the user is not looking at it.
+//  It also delivers the sites' own web notifications (window.Notification), which
+//  Gecko on iOS has no backend for.
 //
 
 import Foundation
@@ -35,11 +37,26 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
         // Upper bound for staying alive in the background for one response
         static let keepAliveLimit: TimeInterval = 15 * 60
         static let testNotificationDelay: TimeInterval = 5
+        // A site's own notification and the bridge's often announce the same response
+        static let duplicateWindow: TimeInterval = 8
     }
+
+    enum WebPermission: String {
+        case undecided = "default"
+        case granted
+        case denied
+    }
+
+    private static let enabledKey = "SiteNotifications.enabled"
+    private static let webPermissionKeyPrefix = "SiteNotifications.web."
 
     // Called with a site id when the user taps a notification
     var onOpenSite: ((String) -> Void)?
     var onStatusRefreshed: (() -> Void)?
+    // iOS refused the app's notifications (turned off in Settings)
+    var onAuthorizationDenied: (() -> Void)?
+    // Asks the user whether a site may send notifications; calls back with the answer
+    var webPermissionPresenter: ((SiteConfiguration, @escaping (Bool) -> Void) -> Void)?
     // The site currently on screen; responses finishing elsewhere are announced
     var visibleSiteID: String?
 
@@ -47,6 +64,8 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
     private var conversationTitles: [String: String] = [:]
     private var isAppActive = true
     private var hasStarted = false
+    private var lastPostDates: [String: Date] = [:]
+    private var sitesAwaitingPermission: Set<String> = []
     private var isKeepingAlive = false
     private var keepAliveToken = 0
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -65,18 +84,10 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
         }
         hasStarted = true
 
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-            let failure = error.map { "\($0.localizedDescription)" }
-            Task { @MainActor in
-                if let failure {
-                    self.authorizationStatus = "request failed: \(failure)"
-                } else {
-                    self.authorizationStatus = granted ? "allowed" : "not allowed"
-                }
-            }
-        }
+        UNUserNotificationCenter.current().delegate = self
+        // iOS wants one request before any notification, including from apps it
+        // shows no permission alert for (TrollStore registers apps as system apps)
+        requestAuthorization(reportingDenial: false)
 
         extensionStatus = "installing"
         Task {
@@ -91,6 +102,101 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
                 NSLog("SiteActivityCenter: failed to install %@: %@", Self.extensionID, "\(error)")
             }
         }
+    }
+
+    // MARK: - Permission
+
+    // nil until the user has answered the app's own "turn on notifications" question
+    var notificationsDecision: Bool? {
+        return UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool
+    }
+
+    func setNotificationsEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.enabledKey)
+        guard enabled else {
+            return
+        }
+        requestAuthorization(reportingDenial: true)
+        // Visible proof that iOS shows this app's notifications
+        let content = UNMutableNotificationContent()
+        content.title = SiteStrings.text("Notifications are on", "ההתראות פועלות")
+        content.body = SiteStrings.text(
+            "You will be notified when a response is ready.",
+            "תקבל התראה כשתשובה מוכנה."
+        )
+        content.sound = .default
+        add(content, trigger: nil, label: "confirmation")
+    }
+
+    private func requestAuthorization(reportingDenial: Bool) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+            let failure = error.map { "\($0.localizedDescription)" }
+            Task { @MainActor in
+                if let failure {
+                    self.authorizationStatus = "request failed: \(failure)"
+                } else {
+                    self.authorizationStatus = granted ? "allowed" : "not allowed"
+                }
+                if reportingDenial, !granted {
+                    self.onAuthorizationDenied?()
+                }
+            }
+        }
+    }
+
+    func webPermission(for site: SiteConfiguration) -> WebPermission {
+        let stored = UserDefaults.standard.string(forKey: Self.webPermissionKeyPrefix + site.id) ?? ""
+        return WebPermission(rawValue: stored) ?? .undecided
+    }
+
+    // The site called Notification.requestPermission()
+    func requestWebPermission(for site: SiteConfiguration) async -> WebPermission {
+        let current = webPermission(for: site)
+        guard current == .undecided,
+              let presenter = webPermissionPresenter,
+              !sitesAwaitingPermission.contains(site.id) else {
+            return current
+        }
+
+        sitesAwaitingPermission.insert(site.id)
+        let allowed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            presenter(site) { allowed in
+                continuation.resume(returning: allowed)
+            }
+        }
+        sitesAwaitingPermission.remove(site.id)
+
+        let result: WebPermission = allowed ? .granted : .denied
+        UserDefaults.standard.set(result.rawValue, forKey: Self.webPermissionKeyPrefix + site.id)
+        if allowed, notificationsDecision != true {
+            setNotificationsEnabled(true)
+        }
+        return result
+    }
+
+    // The site created a Notification
+    func postWebNotification(for site: SiteConfiguration, title: String, body: String) {
+        lastBridgeEvent = "\(site.name): site notification at \(Self.timestamp())"
+        guard webPermission(for: site) == .granted, notificationsDecision != false else {
+            return
+        }
+        guard !isAppActive || visibleSiteID != site.id else {
+            // The user is looking at this site
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        if SiteCatalog.isHub, title.caseInsensitiveCompare(site.name) != .orderedSame {
+            content.title = site.name
+            content.subtitle = title
+        } else {
+            content.title = title.isEmpty ? site.name : title
+        }
+        content.body = body
+        content.sound = .default
+        content.threadIdentifier = "responses-\(site.id)"
+        content.userInfo = ["site": site.id]
+        post(content, for: site, label: "site notification from \(site.name)")
     }
 
     // MARK: - App Lifecycle
@@ -135,7 +241,7 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
         let storedTitle = conversationTitles.removeValue(forKey: site.id)
         let finalTitle = (title?.isEmpty == false ? title : nil) ?? storedTitle
 
-        if !isAppActive || visibleSiteID != site.id {
+        if notificationsDecision == true, !isAppActive || visibleSiteID != site.id {
             postCompletionNotification(for: site, title: finalTitle, preview: preview)
         }
         if generatingSiteIDs.isEmpty {
@@ -219,7 +325,16 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
         content.threadIdentifier = "responses-\(site.id)"
         content.userInfo = ["site": site.id]
 
-        add(content, trigger: nil, label: "response from \(site.name)")
+        post(content, for: site, label: "response from \(site.name)")
+    }
+
+    private func post(_ content: UNNotificationContent, for site: SiteConfiguration, label: String) {
+        if let last = lastPostDates[site.id], Date().timeIntervalSince(last) < UX.duplicateWindow {
+            lastNotificationResult = "\(label) at \(Self.timestamp()) skipped as a duplicate"
+            return
+        }
+        lastPostDates[site.id] = Date()
+        add(content, trigger: nil, label: label)
     }
 
     func sendTestNotification() {
@@ -298,8 +413,20 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func statusText() -> String {
+        let decision: String
+        switch notificationsDecision {
+        case .some(true):
+            decision = "on"
+        case .some(false):
+            decision = "off"
+        case .none:
+            decision = "not chosen yet"
+        }
+        let registersForNotifications = Bundle.main.object(forInfoDictionaryKey: "SBAppUsesLocalNotifications") as? Bool ?? false
         return [
-            "Notifications: \(authorizationStatus)",
+            "In this app: \(decision)",
+            "iOS: \(authorizationStatus)",
+            "Registered with iOS for notifications: \(registersForNotifications ? "yes" : "no")",
             "Bridge extension: \(extensionStatus)",
             "Last bridge event: \(lastBridgeEvent)",
             "Last notification: \(lastNotificationResult)",
@@ -361,6 +488,17 @@ final class SiteBridgeEndpoint: AddonMessageDelegate {
                 active: Self.bool(payload["active"] ?? nil),
                 title: payload["title"] as? String,
                 preview: payload["preview"] as? String
+            )
+        case "web-notification-permission":
+            return ["permission": SiteActivityCenter.shared.webPermission(for: site).rawValue]
+        case "web-notification-request":
+            let permission = await SiteActivityCenter.shared.requestWebPermission(for: site)
+            return ["permission": permission.rawValue]
+        case "web-notification":
+            SiteActivityCenter.shared.postWebNotification(
+                for: site,
+                title: payload["title"] as? String ?? "",
+                body: payload["body"] as? String ?? ""
             )
         default:
             break

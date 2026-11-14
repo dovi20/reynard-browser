@@ -65,6 +65,10 @@ plutil -replace ReynardSiteHub -bool "$HUB" "$INFO_PLIST"
 set_string CFBundleDisplayName "$SITE_NAME"
 set_string CFBundleName "$SITE_NAME"
 
+# TrollStore registers apps as system apps; a system app that posts local
+# notifications is expected to declare this key
+plutil -replace SBAppUsesLocalNotifications -bool true "$INFO_PLIST"
+
 # The site app should not claim reynard:// / http(s) links or Firefox add-on files
 plutil -remove CFBundleURLTypes "$INFO_PLIST" 2>/dev/null || true
 plutil -remove UTImportedTypeDeclarations "$INFO_PLIST" 2>/dev/null || true
@@ -100,4 +104,4 @@ if [ -n "$ICONS_DIR" ] && [ -d "$ICONS_DIR" ]; then
 fi
 
 echo "Customized $(basename "$APP_PATH") for $SITES as \"$SITE_NAME\" (hub: $HUB)"
-plutil -p "$INFO_PLIST" | grep -E 'CFBundle(Identifier|DisplayName|Name)|ReynardSite' || true
+plutil -p "$INFO_PLIST" | grep -E 'CFBundle(Identifier|DisplayName|Name)|ReynardSite|SBAppUsesLocalNotifications' || true

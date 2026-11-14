@@ -1,214 +1,124 @@
-<img width="100" height="100" src="https://github.com/user-attachments/assets/1c42dda2-b778-4342-9f94-8f852c3ad652" />
+# Reynard Site Apps
 
-# Reynard Browser
+Full-screen iPhone apps for websites, running on **Gecko** (the Firefox engine) instead of the WebKit that ships with iOS.
+Built on [Reynard](https://github.com/minh-ton/reynard-browser) and installed with
+[TrollStore](https://github.com/opa334/TrollStore).
 
-Reynard is a **Gecko-based** web browser for iOS 13+.
+It exists for one situation: your iPhone's iOS is too old for a service's own app, and too old for Safari's engine to
+run the service's website. Gecko is bundled with the app, so the site gets a current engine on an old iOS.
 
-Unlike other browsers on iOS that are forced to use Apple's **WebKit** engine (including Safari and all third-party browsers), Reynard uses **Gecko**. This is the same engine that powers the Firefox browser on desktop and Android devices.
+Two kinds of app come out of the same code:
 
-Besides providing an **alternative, up-to-date browser engine**[^1], Reynard supports Firefox add-ons, including more capable ad-blocking extensions, along with privacy features such as Enhanced Tracking Protection and DNS over HTTPS.
-
-[^1]: This is particularly useful on older iOS versions. Because WebKit is bundled with the OS, devices that no longer receive iOS updates are also stuck with an older browser engine, which can cause modern websites to break or render incorrectly.
-
-## Installation
-
-The latest builds are available for download on the [Releases](https://github.com/minh-ton/reynard-browser/releases) page. Please note that this project is still in beta, so expect bugs and missing features.
-
-For common questions and troubleshooting, see the [FAQ](https://github.com/minh-ton/reynard-browser/issues/130).
-
-Reynard is available as a standard build, a TrollStore build[^2], and a jailbroken build[^3], depending on your iOS version and installation method:
-
-<table>
-  <thead>
-    <tr>
-      <th>Method</th>
-      <th>iOS version</th>
-      <th>Build</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><a href="https://altstore.io/">AltStore</a> or <a href="https://sidestore.io/">SideStore</a></td>
-      <td>iOS 17.4+</td>
-      <td><a href="https://github.com/minh-ton/reynard-browser/releases/latest/download/Reynard.ipa"><code>Reynard.ipa</code></a></td>
-    </tr>
-    <tr>
-      <td><a href="https://github.com/opa334/TrollStore">TrollStore</a></td>
-      <td>iOS 14 - 16.6.1, 17.0</td>
-      <td><a href="https://github.com/minh-ton/reynard-browser/releases/latest/download/Reynard-TrollStore.tipa"><code>Reynard-TrollStore.tipa</code></a></td>
-    </tr>
-    <tr>
-      <td><a href="https://github.com/opa334/TrollStore">TrollStore</a></td>
-      <td>Jailbroken iOS 14</td>
-      <td><a href="https://github.com/minh-ton/reynard-browser/releases/latest/download/Reynard-Jailbroken.ipa"><code>Reynard-Jailbroken.ipa</code></a></td>
-    </tr>
-    <tr>
-      <td><a href="https://havoc.app/package/trollstorelite">TrollStore Lite</a></td>
-      <td>Jailbroken iOS 16.7 - 16.7.16, 17.0.1+</td>
-      <td><a href="https://github.com/minh-ton/reynard-browser/releases/latest/download/Reynard-TrollStore.tipa"><code>Reynard-TrollStore.tipa</code></a></td>
-    </tr>
-    <tr>
-      <td><a href="https://www.tigisoftware.com/default/?page_id=78">Filza File Manager</a> + <a href="https://github.com/akemin-dayo/AppSync">AppSync Unified</a></td>
-      <td>Jailbroken iOS 13</td>
-      <td><a href="https://github.com/minh-ton/reynard-browser/releases/latest/download/Reynard-Jailbroken.ipa"><code>Reynard-Jailbroken.ipa</code></a></td>
-    </tr>
-  </tbody>
-</table>
-
-[^2]: The TrollStore build provides automatic JIT enablement, better performance, and automatic app updates. For automatic app updates, make sure **URL Scheme Enabled** is turned on in TrollStore.
-[^3]: The jailbroken build provides automatic JIT enablement and better performance. However, several components are switched off to provide compatibility with libhooker-based jailbreak environments. Automatic app updates is also available when installed through TrollStore.
+- **Single-site app** – one website, full screen, with its own icon and name. Example: Claude.
+- **Hub** – several websites in one app behind a bottom switcher. Example: Claude, ChatGPT and Z.ai. More sites can be
+  added on the device.
 
 > [!NOTE]
-> Although jailbroken builds are available, using Reynard on a jailbroken device is not recommended. Tweaks and other system modifications may affect the browser's performance, stability, or functionality, and support for resulting issues may be limited. **On any jailbroken device**, disable tweak injection for Reynard and its extensions using tools such as [Choicy](https://github.com/opa334/Choicy).
+> These are unofficial wrappers. They load the real websites and are not made by, endorsed by or affiliated with
+> Anthropic, OpenAI, Z.ai, Mozilla or anyone else whose site you open in them. Names and icons belong to their owners.
 
-**For AltStore or SideStore installations:**
+## Status
 
-Make sure to select **Keep App Extensions** during installation, as Reynard will not work without them.
+Experimental. This is what has been confirmed on a real device so far (iPhone, iOS 16.2, TrollStore); treat
+everything else on this page as built but untested:
 
-You can also [click here](https://altdirect.app/?url=https://github.com/minh-ton/reynard-browser/releases/download/0.0.1-a1/source.json&exclude=livecontainer,stikstore,trollapps,feather) to add the AltSource for Reynard to AltStore or SideStore.
+| | State |
+|---|---|
+| Install, launch, sign in, chat (single-site app, claude.ai) | Confirmed |
+| Hub, loading screen, "return to where you were" | Built, not yet confirmed |
+| Notifications when a response is ready | Built, not yet confirmed |
+| ChatGPT and Z.ai inside the hub | Built, not yet confirmed |
 
-> [!IMPORTANT]
-> - **LiveContainer is not supported** due to its own limitations.
-> - Sideloading using a distribution certificate for signing is **not supported**.⁠
-> - Other sideloading methods may be **incompatible with Reynard**, and **no support will be provided** for issues arising from them.
+Battery use and heat are higher than Safari; that comes with Reynard's engine port (see its
+[FAQ](https://github.com/minh-ton/reynard-browser/issues/130)).
 
-## Preview
+## What the apps do
 
-### iOS 14 (iPhone 6S Plus, 14.1)
+- **No browser UI.** Full screen, status bar tinted to the page, edge swipe to go back.
+- **Loading screen** with the app's icon instead of a progress bar.
+- **Sign-in** stays inside the app, including Google, Apple and Microsoft sign-in windows.
+- **Keyboard** pushes the page up so the message box stays visible.
+- **Uploads, camera and microphone** through the normal iOS prompts.
+- **Downloads** open the share sheet (Save to Files).
+- **Links to other websites** that a site opens in a new window go to Safari.
+- **Returns to where you were** when reopened within 30 minutes.
+- **Notifications** when a response is ready while you are in another app (or, in a hub, in another site):
+  - the app notices when a chat site finishes writing a response;
+  - a site's own web notifications (`Notification` API) are delivered through iOS as well;
+  - the app stays alive in the background for up to 15 minutes while a response is still being written.
+- **Hub:** switcher with site icons, "+" to add a site, long-press a site to reload it, return to its start page or
+  remove it. The most recently used sites stay loaded; older ones reload when selected.
+- **App menu:** long-press with two fingers for Start page, Reload, and a status sheet for notifications.
 
-These sites are known to break or render incorrectly on iOS 14. The screenshots below compare how they load in Safari versus Reynard.
+## Install a prebuilt app
 
-<table>
-  <tr>
-    <th colspan="2">github.com</th>
-    <th colspan="2">chatgpt.com</th>
-    <th colspan="2">apple.com</th>
-  </tr>
-  <tr>
-    <td align="center">Safari</td>
-    <td align="center">Reynard</td>
-    <td align="center">Safari</td>
-    <td align="center">Reynard</td>
-    <td align="center">Safari</td>
-    <td align="center">Reynard</td>
-  </tr>
-  <tr>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/d89f4385-c478-4aea-aa9d-6c9fca72252b"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/279f8268-b196-415d-9199-66c06989ae7f"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/1a68024e-83d4-489c-a576-26d5ea43011c"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/eb8f0073-04c2-436d-b66c-9ba2af8e56c2"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/0e52fbf1-af5d-4a83-9bba-50c5d1e15d57"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/edbd8e50-a02d-4107-a5e2-f8ab2c6382bb"><br>
-    </td>
-  </tr>
-</table>
+Requires TrollStore (iOS 14 – 16.6.1, or 17.0). Open the link on the iPhone and install the file with TrollStore.
+JIT is enabled automatically.
 
-### iOS 15 (iPhone 7, 15.8.6)
+| App | Download |
+|---|---|
+| Claude (claude.ai) | [`claude.ai-TrollStore.tipa`](https://github.com/dovi20/reynard-browser/releases/download/app-claude.ai/claude.ai-TrollStore.tipa) |
+| AI Hub (Claude, ChatGPT, Z.ai) | [`ai-hub-TrollStore.tipa`](https://github.com/dovi20/reynard-browser/releases/download/app-ai-hub/ai-hub-TrollStore.tipa) |
 
-<table>
-  <tr>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/e716f563-8ab5-4d3c-b49a-4bb66fc78d59"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/33ece0a3-c876-40c5-acdc-26ea3ac9b9b6"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/96ed97e3-aa57-4b80-adee-108699fef90d"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/e9018214-53ef-41b2-a92c-ed03e7d2a366"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/abe83082-1fc6-4ee9-999e-f81e1712ac13"><br>
-    </td>
-  </tr>
-</table>
+Each app has its own bundle ID and data, so they install side by side. An update installs over the previous version.
 
-### iOS 26 (iPhone 13 mini, 26.1)
+## Build your own app
 
-Reynard also works great on the latest version of iOS!
+No Mac needed; GitHub builds it.
 
-<table>
-  <tr>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/62568ad7-c84c-4623-a560-f679c2a47755"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/4c43cda8-5451-4876-9556-2529a36e0e62"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/d213427d-c207-4129-82b4-a19b091072e0"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/f0e7b590-63be-44cf-87c2-c790c59bd915"><br>
-    </td>
-    <td>
-      <img width=150 src="https://github.com/user-attachments/assets/6015bbc0-727c-4fca-9756-3ec3d256f162"><br>
-    </td>
-  </tr>
-</table>
+1. Fork this repository and open the **Actions** tab of your fork. GitHub disables workflows on new forks; enable them.
+2. Choose **Build Site App** → **Run workflow** and fill in:
 
-## Building
+   | Input | Meaning |
+   |---|---|
+   | `site_url` | One address (`https://example.com`) for a single-site app. Several, comma separated, for a hub; each can carry a name: `Claude=https://claude.ai, ChatGPT=https://chatgpt.com` |
+   | `app_name` | Name under the icon (default: the site's host, or "AI Hub" for a hub) |
+   | `bundle_id` | Default: `site.<reversed host>`, or `site.hub.<name>` for a hub |
+   | `allowed_hosts` | Extra hosts that should stay inside the app, comma separated |
+   | `external_links_in_safari` | Off: links to other websites stay in the app |
+   | `icon_url` | App icon image (default: the site's own icon; a generated icon for a hub) |
 
-> [!WARNING]
-> Build instructions are included below for reference. Please be aware that I **do not** provide support for issues or errors encountered during the build process.
+3. Download the result from your fork's **Releases**: `app-<name>` → `<name>-TrollStore.tipa`.
 
-To build the project, you'll need Xcode, [Python 3](https://www.python.org/downloads/), and [Rust & Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html).
+The first run in a fork builds the Gecko engine, which takes several hours and can hit GitHub's 6-hour limit; if it
+does, run the workflow again and it continues from the cached compile results. After that the engine is reused and a
+build takes about 10 minutes. Builds in a public fork do not use up your Actions minutes.
 
-Clone the repository.
+## Notifications on TrollStore
 
-```bash
-git clone --recursive https://github.com/minh-ton/reynard-browser
-cd reynard-browser
-```
+TrollStore registers apps as system apps. iOS does not show its "allow notifications" alert for those, so the app asks
+the question itself on first launch, and a site that wants to send notifications gets its own in-app question.
+If nothing arrives, open the app menu → **Notifications and status**: it shows what iOS reports and can send a test
+notification. Notification settings for the app are under Settings → Notifications.
 
-Download Gecko and apply patches.
+## How it works
 
-```bash
-./tools/development/update-gecko.sh
-./tools/development/apply-patches.sh
-```
+Reynard already contains the hard part: Gecko running on iOS, with a Swift wrapper (`GeckoView`). This project adds a
+second front end next to Reynard's browser UI. When the app's `Info.plist` lists websites, the app starts the site
+front end instead of the browser:
 
-Build dependencies and the Gecko engine.
+- `browser/Reynard/SiteMode/` – the site front end (root, one controller per site, loading screen, notifications).
+- `browser/SiteExtensions/site-bridge/` – a built-in WebExtension that reports when a site finishes a response and
+  provides the web `Notification` API.
+- `tools/site/` – packaging: icon, site list, name and bundle ID are written into the built app.
+- `.github/workflows/build-site.yml` – the build described above.
 
-```bash
-./tools/development/build-idevice.sh
-./tools/development/build-gecko.sh
-```
+Details for contributors are in [`tools/site/README.md`](tools/site/README.md). Everything else in the repository is
+Reynard; its own documentation is in [`README.reynard.md`](README.reynard.md).
 
-To run Reynard, open `Reynard.xcodeproj` in Xcode and build/run it from there.
+## Limitations
 
-## Development
+- TrollStore only. Gecko on iOS needs entitlements that the App Store and ordinary sideloading do not grant.
+- No push notifications. A notification can only be posted while the app is still alive in the background.
+- Response detection is tuned for Claude, ChatGPT and Z.ai; other sites are detected only when they stream answers
+  as an event stream.
+- Whether a given website works depends on Reynard's engine port.
 
-This project initially started out of curiosity. I wanted to see if I could get Gecko to run without the [BrowserEngineKit](https://developer.apple.com/documentation/browserenginekit) framework, so it could be further modified to support iOS versions as far back as possible. I got it working, and since then, I’ve been focusing on developing engine patches for better integration with iOS, fixing bugs, and turning Reynard into a full, usable browser.
+## Credits and license
 
-If you’ve come across this repository and find it interesting, I’d love to get help or collaborate on it. I’m learning as I go here and don’t have much prior experience with iOS app development or with Gecko itself, so any contributions, feedback, or pointers would be greatly appreciated.
+- [Reynard](https://github.com/minh-ton/reynard-browser) by Minh Ton – the Gecko port and browser this is built on.
+- [Gecko / Firefox](https://github.com/mozilla-firefox/firefox) by Mozilla.
+- [TrollStore](https://github.com/opa334/TrollStore) by opa334.
 
-You can also help translate Reynard into more languages, or support the time I spend working on the project through the links below.
-
-<a href="https://crowdin.com/project/reynard-browser"><img height="40" src="https://github.com/user-attachments/assets/5f00681e-c31a-4c7f-87fe-caaf67ee52d7" /></a>
-<a href="https://buymeacoffee.com/hnimnot"><img height="40" src="https://github.com/user-attachments/assets/ea72836b-3d60-4ffc-be93-d62d5df51047" /></a>
-
-## Acknowledgements
-- [LiveContainer](https://github.com/LiveContainer/LiveContainer): app extension handling and NSExtension usage.
-- [StikDebug](https://github.com/StephenDev0/StikDebug) and [idevice](https://github.com/jkcoxson/idevice): pairing-based JIT enablement support.
-- [TrollStore](https://github.com/opa334/TrollStore): spawning a binary as root and JIT enablement.
-- [Amethyst-iOS](https://github.com/AngelAuraMC/Amethyst-iOS), [dolphin-ios](https://github.com/OatmealDome/dolphin-ios), [DukeX](https://github.com/MaftyManicEMU/DukeX), and [MeloNX](https://git.ryujinx.app/projects/MeloNX): Various utility functions, numerous private API usage, and JIT memory handling.
-- [WebKit](https://github.com/webkit/webkit): Private API references for deeper iOS integration, such as sandboxing, hardware keyboard support, and lifecycle events.
-- [Pre-existing work](https://bugzilla.mozilla.org/show_bug.cgi?id=1882872) on bringing Gecko to iOS using BrowserEngineKit: most of the difficult engine integration. 
-
-## License
-
-This project is licensed under the [GNU General Public License v3.0](https://github.com/minh-ton/reynard-browser/blob/main/LICENSE), except for the `patches` directory containing the modifications to the Firefox Gecko engine and therefore is licensed under the [Mozilla Public License 2.0](https://github.com/minh-ton/reynard-browser/blob/main/LICENSE.firefox).
+Like Reynard, this project is licensed under [GPL-3.0](LICENSE); the engine patches in `patches/` are under
+[MPL-2.0](LICENSE.firefox). If you distribute an app built from it, the GPL requires you to make your source available.

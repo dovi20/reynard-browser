@@ -16,6 +16,8 @@ final class SiteRootViewController: UIViewController {
         static let switcherHeight: CGFloat = 52
         // Devices under this keep fewer sites loaded at once
         static let largeMemoryThreshold: UInt64 = 3_500_000_000
+        // The notifications question waits until the first page is on screen
+        static let notificationsOfferDelay: TimeInterval = 2
     }
 
     private static let selectedSiteKey = "SiteRoot.selectedSite"
@@ -30,6 +32,7 @@ final class SiteRootViewController: UIViewController {
     private var recentIDs: [String] = []
     private var selectedID: String?
     private var isContentFullScreen = false
+    private var hasOfferedNotifications = false
 
     private let contentContainer = UIView()
     private let switcher = SiteSwitcherBar()
@@ -65,6 +68,16 @@ final class SiteRootViewController: UIViewController {
         activity.onOpenSite = { [weak self] id in
             self?.select(id)
         }
+        activity.webPermissionPresenter = { [weak self] site, completion in
+            guard let self else {
+                completion(false)
+                return
+            }
+            self.presentWebPermissionRequest(for: site, completion: completion)
+        }
+        activity.onAuthorizationDenied = { [weak self] in
+            self?.presentNotificationsBlocked()
+        }
         activity.start()
 
         configureHierarchy()
@@ -74,6 +87,17 @@ final class SiteRootViewController: UIViewController {
             select(initial.id)
         }
         refreshSwitcher()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !hasOfferedNotifications else {
+            return
+        }
+        hasOfferedNotifications = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + UX.notificationsOfferDelay) { [weak self] in
+            self?.offerNotificationsIfNeeded()
+        }
     }
 
     override func didReceiveMemoryWarning() {
@@ -396,6 +420,93 @@ final class SiteRootViewController: UIViewController {
         topPresenter.present(sheet, animated: true)
     }
 
+    // MARK: - Notifications
+
+    // iOS shows no permission alert for apps TrollStore installs, so the app asks itself
+    private func offerNotificationsIfNeeded() {
+        guard activity.notificationsDecision == nil else {
+            return
+        }
+        guard presentedViewController == nil else {
+            // Something else is up (a site prompt); ask after it
+            DispatchQueue.main.asyncAfter(deadline: .now() + UX.notificationsOfferDelay) { [weak self] in
+                self?.offerNotificationsIfNeeded()
+            }
+            return
+        }
+
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "This app"
+        let alert = UIAlertController(
+            title: SiteStrings.text(
+                "\u{201C}\(appName)\u{201D} Would Like to Send You Notifications",
+                "\u{201C}\(appName)\u{201D} מבקשת לשלוח לך התראות"
+            ),
+            message: SiteStrings.text(
+                "You get a notification when a response is ready and you are not looking at it.",
+                "תקבל התראה כשתשובה מוכנה ואתה לא מסתכל עליה."
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: SiteStrings.text("Don\u{2019}t Allow", "אל תאפשר"),
+            style: .default
+        ) { [weak self] _ in
+            self?.activity.setNotificationsEnabled(false)
+        })
+        alert.addAction(UIAlertAction(
+            title: SiteStrings.text("Allow", "אפשר"),
+            style: .default
+        ) { [weak self] _ in
+            self?.activity.setNotificationsEnabled(true)
+        })
+        present(alert, animated: true)
+    }
+
+    private func presentWebPermissionRequest(for site: SiteConfiguration, completion: @escaping (Bool) -> Void) {
+        let alert = UIAlertController(
+            title: SiteStrings.text(
+                "\u{201C}\(site.name)\u{201D} Would Like to Send You Notifications",
+                "\u{201C}\(site.name)\u{201D} מבקש לשלוח לך התראות"
+            ),
+            message: site.host,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: SiteStrings.text("Don\u{2019}t Allow", "אל תאפשר"),
+            style: .default
+        ) { _ in
+            completion(false)
+        })
+        alert.addAction(UIAlertAction(
+            title: SiteStrings.text("Allow", "אפשר"),
+            style: .default
+        ) { _ in
+            completion(true)
+        })
+        topPresenter.present(alert, animated: true)
+    }
+
+    private func presentNotificationsBlocked() {
+        let alert = UIAlertController(
+            title: SiteStrings.text("iOS is blocking notifications", "iOS חוסם את ההתראות"),
+            message: SiteStrings.text(
+                "Open Settings, then Notifications, choose this app and allow notifications.",
+                "פתח הגדרות, אחר כך התראות, בחר באפליקציה הזאת ואפשר התראות."
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: SiteStrings.text("Open Settings", "פתח הגדרות"),
+            style: .default
+        ) { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+        })
+        alert.addAction(UIAlertAction(title: SiteStrings.text("Close", "סגור"), style: .cancel))
+        topPresenter.present(alert, animated: true)
+    }
+
     private func presentStatus() {
         activity.onStatusRefreshed = { [weak self] in
             guard let self else {
@@ -413,6 +524,15 @@ final class SiteRootViewController: UIViewController {
                 style: .default
             ) { _ in
                 SiteActivityCenter.shared.sendTestNotification()
+            })
+            let isOn = self.activity.notificationsDecision == true
+            alert.addAction(UIAlertAction(
+                title: isOn
+                ? SiteStrings.text("Turn notifications off", "כבה התראות")
+                : SiteStrings.text("Turn notifications on", "הפעל התראות"),
+                style: .default
+            ) { _ in
+                SiteActivityCenter.shared.setNotificationsEnabled(!isOn)
             })
             alert.addAction(UIAlertAction(title: SiteStrings.text("Close", "סגור"), style: .cancel))
             self.topPresenter.present(alert, animated: true)
