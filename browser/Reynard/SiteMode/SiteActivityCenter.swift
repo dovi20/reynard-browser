@@ -48,6 +48,7 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private static let enabledKey = "SiteNotifications.enabled"
+    private static let staysAwakeKey = "SiteNotifications.staysAwakeInBackground"
     private static let webPermissionKeyPrefix = "SiteNotifications.web."
 
     // Called with a site id when the user taps a notification
@@ -75,6 +76,9 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
     private var authorizationStatus = "unknown"
     private var lastBridgeEvent = "none"
     private var lastNotificationResult = "none"
+    private var restartCount = 0
+    private var lastRestart = "none"
+    private var isPlayingKeepAliveAudio = false
 
     // MARK: - Setup
 
@@ -215,6 +219,30 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }
 
+    // MARK: - Background Mode
+
+    // Off (default): the app behaves like any other app. iOS gives it a short
+    // grace period after the user leaves and then freezes it, so a response is
+    // announced only if it finishes within that time.
+    // On: while a response is being written, silent audio keeps the app running
+    // in the background so the notification can be posted when it is done.
+    var staysAwakeInBackground: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: Self.staysAwakeKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: Self.staysAwakeKey)
+            if !newValue {
+                stopKeepAliveAudio()
+            }
+        }
+    }
+
+    func noteRestart(of site: SiteConfiguration, reason: String) {
+        restartCount += 1
+        lastRestart = "\(site.name): \(reason) at \(Self.timestamp())"
+    }
+
     // MARK: - Activity
 
     func bridgeDidLoad(for site: SiteConfiguration) {
@@ -268,7 +296,10 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
         keepAliveToken += 1
         let token = keepAliveToken
 
-        BackgroundAudioManager.shared.start()
+        if staysAwakeInBackground {
+            isPlayingKeepAliveAudio = true
+            BackgroundAudioManager.shared.start()
+        }
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Site response") { [weak self] in
             self?.endBackgroundTask()
         }
@@ -287,8 +318,16 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
         }
         isKeepingAlive = false
         keepAliveToken += 1
-        BackgroundAudioManager.shared.stop()
+        stopKeepAliveAudio()
         endBackgroundTask()
+    }
+
+    private func stopKeepAliveAudio() {
+        guard isPlayingKeepAliveAudio else {
+            return
+        }
+        isPlayingKeepAliveAudio = false
+        BackgroundAudioManager.shared.stop()
     }
 
     private func endBackgroundTask() {
@@ -431,6 +470,8 @@ final class SiteActivityCenter: NSObject, UNUserNotificationCenterDelegate {
             "Last bridge event: \(lastBridgeEvent)",
             "Last notification: \(lastNotificationResult)",
             "Responses in progress: \(generatingSiteIDs.count)",
+            "Stay awake in the background: \(staysAwakeInBackground ? "on" : "off")",
+            "Page restarts: \(restartCount), last: \(lastRestart)",
         ].joined(separator: "\n")
     }
 

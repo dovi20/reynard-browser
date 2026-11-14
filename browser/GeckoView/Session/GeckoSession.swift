@@ -574,6 +574,41 @@ public class GeckoSession {
         return (bottomRatio, caretTop.map { $0 / engineView.contentScaleFactor })
     }
     
+    /// Asks the page's content process a trivial question and reports whether it
+    /// answered in time. A content process that iOS froze or closed while the
+    /// app was in the background does not answer.
+    public func isContentResponsive(timeout: TimeInterval) async -> Bool {
+        final class Probe {
+            var isFinished = false
+        }
+        let probe = Probe()
+        
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            Task { @MainActor in
+                var answered = true
+                do {
+                    _ = try await self.dispatcher.query(type: "GeckoView:ContainsFormData")
+                } catch {
+                    // Gecko dropped the question without answering; any other
+                    // error still came back from a live engine
+                    answered = !"\(error)".contains("callback never invoked")
+                }
+                guard !probe.isFinished else {
+                    return
+                }
+                probe.isFinished = true
+                continuation.resume(returning: answered)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+                guard !probe.isFinished else {
+                    return
+                }
+                probe.isFinished = true
+                continuation.resume(returning: false)
+            }
+        }
+    }
+    
     /// Asks Gecko to scroll/zoom the focused input into view after the next
     /// viewport resize (same event GeckoView on Android sends when the soft
     /// keyboard resizes the view).

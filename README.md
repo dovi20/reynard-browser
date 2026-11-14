@@ -45,7 +45,11 @@ Battery use and heat are higher than Safari; that comes with Reynard's engine po
 - **Notifications** when a response is ready while you are in another app (or, in a hub, in another site):
   - the app notices when a chat site finishes writing a response;
   - a site's own web notifications (`Notification` API) are delivered through iOS as well;
-  - the app stays alive in the background for up to 15 minutes while a response is still being written.
+  - by default the app behaves like any other app: iOS freezes it shortly after you leave, so only a response that
+    finishes within that short time is announced. An option in the app menu keeps the app awake in the background
+    (up to 15 minutes) while a response is still being written, at the cost of battery.
+- **Recovers on return.** If iOS closed or froze the page while the app was away, the page is reloaded
+  automatically; a page that keeps closing gets a "try again / start page" choice instead of a blank screen.
 - **Hub:** switcher with site icons, "+" to add a site, long-press a site to reload it, return to its start page or
   remove it. The most recently used sites stay loaded; older ones reload when selected.
 - **App menu:** long-press with two fingers for Start page, Reload, and a status sheet for notifications.

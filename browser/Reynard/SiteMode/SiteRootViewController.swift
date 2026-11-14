@@ -534,6 +534,15 @@ final class SiteRootViewController: UIViewController {
             ) { _ in
                 SiteActivityCenter.shared.setNotificationsEnabled(!isOn)
             })
+            let staysAwake = self.activity.staysAwakeInBackground
+            alert.addAction(UIAlertAction(
+                title: staysAwake
+                ? SiteStrings.text("Stop staying awake in the background", "הפסק להישאר ער ברקע")
+                : SiteStrings.text("Stay awake while a response is written", "הישאר ער בזמן שתשובה נכתבת"),
+                style: .default
+            ) { _ in
+                SiteActivityCenter.shared.staysAwakeInBackground = !staysAwake
+            })
             alert.addAction(UIAlertAction(title: SiteStrings.text("Close", "סגור"), style: .cancel))
             self.topPresenter.present(alert, animated: true)
         }

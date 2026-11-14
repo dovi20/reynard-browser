@@ -57,8 +57,14 @@ JIT is enabled automatically (ptrace).
   go to Safari, except sign-in pages (Google, Apple, Microsoft), which open in a full-screen popup that keeps the opener.
 - Downloads open the share sheet (Save to Files).
 - Reopening within 30 minutes returns to the page the site was on; later it starts at the site's start page.
-- While a site is writing a response and the app goes to the background, the app keeps itself alive (silent audio,
-  up to 15 minutes) and posts a local notification when the response is done. Detection: a known chat request
+- Background: by default only the standard background task is used (iOS allows a short grace period, then freezes
+  the app). With "Stay awake while a response is written" on (app menu → Notifications and status), silent audio
+  keeps the app running for up to 15 minutes while a response is being written.
+- On return to the foreground the selected site is checked: a closed session is restarted, and after 15 seconds
+  or more away the content process is asked a trivial question (`GeckoSession.isContentResponsive`); no answer
+  within 4 seconds reloads the page. Three restarts within two minutes stop the reloading and offer the start page.
+  A resumed page that never settled before the app died is not resumed again on the next launch.
+- When a response is done and the user is not looking at it, the app posts a local notification. Detection: a known chat request
   (Claude, ChatGPT, Z.ai) or, on other sites, a POST answered with an event stream.
 - TrollStore registers apps as system apps. iOS shows no "allow notifications" alert for those, and TrollStore's
   author points to the Info.plist key `SBAppUsesLocalNotifications` for system apps that post local notifications

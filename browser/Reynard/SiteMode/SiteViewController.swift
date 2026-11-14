@@ -21,6 +21,14 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         static let splashTimeout: TimeInterval = 20
         // Reopening the app within this time returns to the page it was on
         static let resumeWindow: TimeInterval = 30 * 60
+        // After this long away, check on return that the page still answers
+        static let healthCheckMinimumAway: TimeInterval = 15
+        static let healthCheckTimeout: TimeInterval = 4
+        // This many restarts within the window means reloading is not helping
+        static let restartLoopCount = 3
+        static let restartLoopWindow: TimeInterval = 120
+        // A page that has been on screen this long counts as loaded safely
+        static let settleDelay: TimeInterval = 8
     }
 
     let site: SiteConfiguration
@@ -55,6 +63,9 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     private var needsSessionRecovery = false
     private var isFullScreen = false
     private var splashToken = 0
+    private var settleToken = 0
+    private var resignDate: Date?
+    private var restartDates: [Date] = []
     private var isLoadingBlankPage = false
     private(set) var isSelected = false
     private(set) var pageBackgroundColor: UIColor = UIColor(named: "LaunchBackground") ?? .systemBackground
@@ -126,9 +137,10 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         isSelected = selected
 
         if selected {
-            if let session {
+            if let session, session.isOpen() {
                 sessionManager.activate(session)
             } else {
+                tearDownSession()
                 showError(nil)
                 startSession(loading: resumeURL())
             }
@@ -149,15 +161,90 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     }
 
     func applicationDidBecomeActive() {
-        if isSelected, needsSessionRecovery {
-            recoverSession()
+        guard isSelected else {
+            return
+        }
+        let timeAway = resignDate.map { Date().timeIntervalSince($0) } ?? 0
+        resignDate = nil
+
+        guard let session, session.isOpen(), !needsSessionRecovery else {
+            restart(reason: "page was closed while the app was away")
+            return
+        }
+        // Active and focused again, so taps and the keyboard reach the page
+        sessionManager.activate(session)
+        if timeAway >= UX.healthCheckMinimumAway {
+            checkResponsiveness(of: session)
         }
     }
 
     func applicationWillResignActive() {
+        resignDate = Date()
         if isSelected {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastUsedKey)
         }
+    }
+
+    // iOS can freeze or close the page's process while the app is in the
+    // background without telling the app; a page that no longer answers is reloaded
+    private func checkResponsiveness(of checkedSession: GeckoSession) {
+        Task {
+            let isResponsive = await checkedSession.isContentResponsive(timeout: UX.healthCheckTimeout)
+            guard !isResponsive,
+                  checkedSession === self.session,
+                  self.isSelected,
+                  self.sessionManager.isApplicationActive else {
+                return
+            }
+            self.restart(reason: "page did not answer after returning to the app")
+        }
+    }
+
+    // MARK: - Restarts
+
+    private func restart(reason: String) {
+        let now = Date()
+        restartDates = restartDates.filter { now.timeIntervalSince($0) < UX.restartLoopWindow }
+        restartDates.append(now)
+        SiteActivityCenter.shared.noteRestart(of: site, reason: reason)
+
+        guard restartDates.count < UX.restartLoopCount else {
+            presentRestartLoop()
+            return
+        }
+        recoverSession()
+    }
+
+    // The page keeps dying (usually a page too heavy for the device's memory);
+    // reloading it again and again only shows a blank screen
+    private func presentRestartLoop() {
+        restartDates = []
+        tearDownSession()
+        needsSessionRecovery = true
+        hideSplash()
+        showError(WebRequestError(kind: .contentCrashed, uri: lastURL))
+
+        let alert = UIAlertController(
+            title: SiteStrings.text("This page keeps closing", "הדף הזה נסגר שוב ושוב"),
+            message: SiteStrings.text(
+                "It may be too heavy for this device. You can try it again or go to the start page.",
+                "ייתכן שהוא כבד מדי למכשיר הזה. אפשר לנסות שוב או לעבור לדף הפתיחה."
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(
+            title: SiteStrings.text("Try again", "נסה שוב"),
+            style: .default
+        ) { [weak self] _ in
+            self?.recoverSession()
+        })
+        alert.addAction(UIAlertAction(
+            title: SiteStrings.text("Start page", "דף הפתיחה"),
+            style: .default
+        ) { [weak self] _ in
+            self?.goToStartPage()
+        })
+        topPresenter.present(alert, animated: true)
     }
 
     func open(_ url: URL) {
@@ -198,6 +285,12 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         return "SiteState.\(site.id).lastURL"
     }
 
+    // Set while a resumed page is loading and cleared once it has stayed on
+    // screen; if the app dies in between, the next launch does not resume it
+    private var unsettledURLKey: String {
+        return "SiteState.\(site.id).unsettledURL"
+    }
+
     private var lastUsedKey: String {
         return "SiteState.\(site.id).lastUsed"
     }
@@ -212,9 +305,11 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
            Date().timeIntervalSince1970 - lastUsed < UX.resumeWindow,
            let stored = defaults.string(forKey: lastURLKey),
            let storedURL = URL(string: stored),
-           site.isInternal(storedURL) {
+           site.isInternal(storedURL),
+           defaults.string(forKey: unsettledURLKey) != stored {
             return stored
         }
+        defaults.removeObject(forKey: unsettledURLKey)
         return site.startURL.absoluteString
     }
 
@@ -259,6 +354,10 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         }
         self.session = session
         needsSessionRecovery = false
+        settleToken += 1
+        if url != site.startURL.absoluteString {
+            UserDefaults.standard.set(url, forKey: unsettledURLKey)
+        }
         showSplash()
         session.load(url)
     }
@@ -301,6 +400,18 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         }
         splashToken += 1
         splashView.hide()
+        guard session != nil else {
+            return
+        }
+
+        settleToken += 1
+        let token = settleToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + UX.settleDelay) { [weak self] in
+            guard let self, self.settleToken == token, self.session != nil else {
+                return
+            }
+            UserDefaults.standard.removeObject(forKey: self.unsettledURLKey)
+        }
     }
 
     // MARK: - Layout
@@ -562,9 +673,10 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
 
         if recoverAutomatically {
             if sessionManager.isApplicationActive {
-                recoverSession()
+                restart(reason: "iOS closed the page's process")
             }
         } else {
+            SiteActivityCenter.shared.noteRestart(of: site, reason: "the page's process crashed")
             showError(WebRequestError(kind: .contentCrashed, uri: lastURL))
         }
     }
