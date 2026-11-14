@@ -2,8 +2,8 @@
 //  SiteViewController.swift
 //  Reynard
 //
-//  Single-site shell: one full-screen GeckoSession pinned to
-//  SiteConfiguration.current, with no browser chrome.
+//  One website shown full-screen with no browser chrome. SiteRootViewController
+//  hosts one of these per site (a single one in a single-site app).
 //
 
 import GeckoView
@@ -11,20 +11,31 @@ import UIKit
 
 final class SiteViewController: UIViewController, ContentDelegate, NavigationDelegate, ProgressDelegate, UIGestureRecognizerDelegate {
     private enum UX {
-        static let progressHeight: CGFloat = 2
         static let backSwipeDistance: CGFloat = 80
         static let backSwipeVelocity: CGFloat = 500
         static let floatingKeyboardWidthRatio: CGFloat = 0.8
         static let keyboardAnimationDuration: TimeInterval = 0.25
         static let keyboardAnimationCurve: UInt = 7
+        static let menuPressDuration: TimeInterval = 0.7
+        // The loading screen never outlives this, whatever the page reports
+        static let splashTimeout: TimeInterval = 20
+        // Reopening the app within this time returns to the page it was on
+        static let resumeWindow: TimeInterval = 30 * 60
     }
 
-    let configuration: SiteConfiguration
-    let sessionManager = SessionManager()
+    let site: SiteConfiguration
+    let sessionManager: SessionManager
+
+    // Page colors changed (the hub tints its switcher with them)
+    var onAppearanceChange: (() -> Void)?
+    var onFullScreenChange: ((Bool) -> Void)?
+    // Two-finger long press: the app menu
+    var onMenuRequest: (() -> Void)?
 
     private let geckoView = GeckoView()
     private let errorView = WebContentErrorView()
-    private let progressView = UIProgressView(progressViewStyle: .bar)
+    private let splashView: SiteSplashView
+    private let bridgeEndpoint: SiteBridgeEndpoint
     private let promptCoordinator = PromptCoordinator(presenter: PromptPresenter())
     private let permissionCoordinator = PermissionCoordinator(promptPresenter: PermissionPromptPresenter())
     private let selectionActionCoordinator = SelectionActionCoordinator(
@@ -34,7 +45,6 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         )
     )
 
-    private let bridge: SiteBridge?
     private weak var popupViewController: SitePopupViewController?
     private var pendingDownloads: [String: String] = [:]
 
@@ -44,7 +54,10 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     private var currentError: WebRequestError?
     private var needsSessionRecovery = false
     private var isFullScreen = false
-    private var pageBackgroundColor: UIColor = .systemBackground
+    private var splashToken = 0
+    private var isLoadingBlankPage = false
+    private(set) var isSelected = false
+    private(set) var pageBackgroundColor: UIColor = UIColor(named: "LaunchBackground") ?? .systemBackground
 
     private var normalConstraints: [NSLayoutConstraint] = []
     private var fullScreenConstraints: [NSLayoutConstraint] = []
@@ -52,9 +65,11 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
 
     // MARK: - Lifecycle
 
-    init(configuration: SiteConfiguration) {
-        self.configuration = configuration
-        self.bridge = SiteBridge.supports(configuration) ? SiteBridge() : nil
+    init(site: SiteConfiguration, sessionManager: SessionManager, splashIcon: UIImage?) {
+        self.site = site
+        self.sessionManager = sessionManager
+        self.splashView = SiteSplashView(icon: splashIcon)
+        self.bridgeEndpoint = SiteBridgeEndpoint(site: site)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -82,37 +97,67 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         super.viewDidLoad()
         view.backgroundColor = pageBackgroundColor
 
-        RuntimePreferences.apply() // Gecko prefs
-        bridge?.start()
-
         configureHierarchy()
-        configureBackSwipe()
+        configureGestures()
         observeKeyboard()
-        startSession(loading: configuration.startURL.absoluteString)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        _ = session?.focusForHardwareKeyboard()
+        if isSelected {
+            _ = session?.focusForHardwareKeyboard()
+        }
     }
 
-    // MARK: - Scene Lifecycle (called by SceneDelegate)
+    // MARK: - Selection (called by SiteRootViewController)
 
-    func setApplicationForeground(_ isForeground: Bool) {
-        sessionManager.setApplicationForeground(isForeground)
+    var splashIcon: UIImage? {
+        get { return splashView.icon }
+        set { splashView.icon = newValue }
+    }
+
+    // A site with no session costs no memory; it reloads when selected again
+    var isLive: Bool {
+        return session != nil
+    }
+
+    func setSelected(_ selected: Bool) {
+        loadViewIfNeeded()
+        isSelected = selected
+
+        if selected {
+            if let session {
+                sessionManager.activate(session)
+            } else {
+                showError(nil)
+                startSession(loading: resumeURL())
+            }
+            return
+        }
+
+        geckoView.endEditing(true)
+        if let session {
+            sessionManager.deactivate(session)
+        }
+    }
+
+    func suspend() {
+        guard !isSelected, session != nil else {
+            return
+        }
+        tearDownSession()
     }
 
     func applicationDidBecomeActive() {
-        sessionManager.applicationDidBecomeActive()
-        bridge?.applicationDidBecomeActive()
-        if needsSessionRecovery {
+        if isSelected, needsSessionRecovery {
             recoverSession()
         }
     }
 
     func applicationWillResignActive() {
-        sessionManager.applicationWillResignActive()
-        bridge?.applicationWillResignActive()
+        if isSelected {
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastUsedKey)
+        }
     }
 
     func open(_ url: URL) {
@@ -121,7 +166,66 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
             return
         }
         loadViewIfNeeded()
-        session?.load(url.absoluteString)
+        if let session {
+            session.load(url.absoluteString)
+        } else {
+            lastURL = url.absoluteString
+        }
+    }
+
+    func reload() {
+        if session == nil || needsSessionRecovery {
+            recoverSession()
+        } else {
+            showError(nil)
+            session?.reload()
+        }
+    }
+
+    func goToStartPage() {
+        lastURL = site.startURL.absoluteString
+        if let session, !needsSessionRecovery {
+            showError(nil)
+            session.load(site.startURL.absoluteString)
+        } else {
+            recoverSession()
+        }
+    }
+
+    // MARK: - Resume State
+
+    private var lastURLKey: String {
+        return "SiteState.\(site.id).lastURL"
+    }
+
+    private var lastUsedKey: String {
+        return "SiteState.\(site.id).lastUsed"
+    }
+
+    private func resumeURL() -> String {
+        if let lastURL {
+            return lastURL
+        }
+        let defaults = UserDefaults.standard
+        let lastUsed = defaults.double(forKey: lastUsedKey)
+        if lastUsed > 0,
+           Date().timeIntervalSince1970 - lastUsed < UX.resumeWindow,
+           let stored = defaults.string(forKey: lastURLKey),
+           let storedURL = URL(string: stored),
+           site.isInternal(storedURL) {
+            return stored
+        }
+        return site.startURL.absoluteString
+    }
+
+    private func rememberLocation(_ url: String) {
+        lastURL = url
+        guard let parsed = URL(string: url), site.isInternal(parsed) else {
+            return
+        }
+        let defaults = UserDefaults.standard
+        defaults.set(url, forKey: lastURLKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: lastUsedKey)
     }
 
     // MARK: - Session
@@ -145,12 +249,17 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
                 selectionAction: selectionActionCoordinator
             )
         )
-        bridge?.attach(to: session)
+        bridgeEndpoint.attach(to: session)
         sessionManager.open(session)
         geckoView.session = session
-        sessionManager.activate(session)
+        if isSelected {
+            sessionManager.activate(session)
+        } else {
+            sessionManager.deactivate(session)
+        }
         self.session = session
         needsSessionRecovery = false
+        showSplash()
         session.load(url)
     }
 
@@ -162,12 +271,36 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         geckoView.session = nil
         sessionManager.close(session)
         self.session = nil
+        canGoBack = false
+        SiteActivityCenter.shared.sessionDidClose(for: site)
     }
 
     private func recoverSession() {
         tearDownSession()
         showError(nil)
-        startSession(loading: lastURL ?? configuration.startURL.absoluteString)
+        startSession(loading: lastURL ?? site.startURL.absoluteString)
+    }
+
+    // MARK: - Loading Screen
+
+    private func showSplash() {
+        splashToken += 1
+        let token = splashToken
+        splashView.show()
+        DispatchQueue.main.asyncAfter(deadline: .now() + UX.splashTimeout) { [weak self] in
+            guard let self, self.splashToken == token else {
+                return
+            }
+            self.splashView.hide()
+        }
+    }
+
+    private func hideSplash() {
+        guard splashView.isShowing else {
+            return
+        }
+        splashToken += 1
+        splashView.hide()
     }
 
     // MARK: - Layout
@@ -175,19 +308,18 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     private func configureHierarchy() {
         geckoView.translatesAutoresizingMaskIntoConstraints = false
         errorView.translatesAutoresizingMaskIntoConstraints = false
-        progressView.translatesAutoresizingMaskIntoConstraints = false
+        splashView.translatesAutoresizingMaskIntoConstraints = false
 
         errorView.isHidden = true
         errorView.onAction = { [weak self] action in
             self?.handleErrorAction(action)
         }
 
-        progressView.trackTintColor = .clear
-        progressView.alpha = 0
+        splashView.isHidden = true
 
         view.addSubview(geckoView)
+        view.addSubview(splashView)
         view.addSubview(errorView)
-        view.addSubview(progressView)
 
         let safeArea = view.safeAreaLayoutGuide
         let keyboardBottom = geckoView.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor)
@@ -211,10 +343,10 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
             errorView.leadingAnchor.constraint(equalTo: geckoView.leadingAnchor),
             errorView.trailingAnchor.constraint(equalTo: geckoView.trailingAnchor),
 
-            progressView.topAnchor.constraint(equalTo: geckoView.topAnchor),
-            progressView.leadingAnchor.constraint(equalTo: geckoView.leadingAnchor),
-            progressView.trailingAnchor.constraint(equalTo: geckoView.trailingAnchor),
-            progressView.heightAnchor.constraint(equalToConstant: UX.progressHeight),
+            splashView.topAnchor.constraint(equalTo: view.topAnchor),
+            splashView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            splashView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            splashView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         errorView.configureContentLayout(
             topAnchor: geckoView.topAnchor,
@@ -239,14 +371,27 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         view.layoutIfNeeded()
     }
 
-    // MARK: - Back Swipe
+    // MARK: - Gestures
 
-    private func configureBackSwipe() {
+    private func configureGestures() {
         let recognizer = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleBackSwipe(_:)))
         let isRightToLeft = UIApplication.shared.userInterfaceLayoutDirection == .rightToLeft
         recognizer.edges = isRightToLeft ? .right : .left
         recognizer.delegate = self
         view.addGestureRecognizer(recognizer)
+
+        let menuPress = UILongPressGestureRecognizer(target: self, action: #selector(handleMenuPress(_:)))
+        menuPress.numberOfTouchesRequired = 2
+        menuPress.minimumPressDuration = UX.menuPressDuration
+        menuPress.delegate = self
+        view.addGestureRecognizer(menuPress)
+    }
+
+    @objc private func handleMenuPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else {
+            return
+        }
+        onMenuRequest?()
     }
 
     @objc private func handleBackSwipe(_ recognizer: UIScreenEdgePanGestureRecognizer) {
@@ -286,7 +431,8 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     }
 
     @objc private func keyboardFrameWillChange(_ notification: Notification) {
-        guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else {
+        guard isSelected,
+              let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else {
             return
         }
 
@@ -340,19 +486,14 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         currentError = error
         errorView.configure(error: error, canGoBack: canGoBack)
         if error != nil {
-            setProgressVisible(false)
+            hideSplash()
         }
     }
 
     private func handleErrorAction(_ action: WebContentErrorView.Action) {
         switch action {
         case .retry:
-            if session == nil || needsSessionRecovery {
-                recoverSession()
-            } else {
-                showError(nil)
-                session?.reload()
-            }
+            reload()
         case .back:
             showError(nil)
             session?.goBack()
@@ -369,38 +510,35 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         }
     }
 
-    // MARK: - Progress
-
-    private func setProgressVisible(_ visible: Bool) {
-        UIView.animate(withDuration: 0.2) {
-            self.progressView.alpha = visible ? 1 : 0
-        }
-    }
+    // MARK: - ProgressDelegate
 
     func onPageStart(session: GeckoSession, url: String) {
-        progressView.setProgress(0.1, animated: false)
-        setProgressVisible(true)
-    }
-
-    func onProgressChange(session: GeckoSession, progress: Int) {
-        progressView.setProgress(Float(progress) / 100, animated: true)
+        isLoadingBlankPage = url.isEmpty || url.hasPrefix("about:blank")
     }
 
     func onPageStop(session: GeckoSession, success: Bool) {
-        progressView.setProgress(1, animated: true)
-        setProgressVisible(false)
+        // A new session can report its initial blank page before the site
+        if !isLoadingBlankPage {
+            hideSplash()
+        }
     }
 
     // MARK: - ContentDelegate
+
+    func onFirstContentfulPaint(session: GeckoSession) {
+        hideSplash()
+    }
 
     func onPageBackgroundColorChange(session: GeckoSession, color: UIColor) {
         pageBackgroundColor = color
         view.backgroundColor = color
         setNeedsStatusBarAppearanceUpdate()
+        onAppearanceChange?()
     }
 
     func onFullScreen(session: GeckoSession, fullScreen: Bool) {
         setFullScreen(fullScreen)
+        onFullScreenChange?(fullScreen)
     }
 
     func onCrash(session: GeckoSession) {
@@ -416,6 +554,10 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
             return
         }
         tearDownSession()
+        guard isSelected else {
+            // Reloads from lastURL the next time this site is selected
+            return
+        }
         needsSessionRecovery = true
 
         if recoverAutomatically {
@@ -444,7 +586,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
         guard let url, !url.isEmpty, !url.hasPrefix("about:blank") else {
             return
         }
-        lastURL = url
+        rememberLocation(url)
         permissionCoordinator.restorePermissions(for: session, at: url)
     }
 
@@ -458,12 +600,13 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     }
 
     func onLoadRequest(session: GeckoSession, request: LoadRequest) async -> AllowOrDeny {
-        switch configuration.route(for: request.uri) {
+        switch site.route(for: request.uri) {
         case .external(let url):
             let isWebLink = url.scheme?.lowercased().hasPrefix("http") == true
-            // Server redirects and script hops (sign-in flows) stay in the app;
-            // links the user taps to other websites open in Safari.
-            if isWebLink, request.isRedirect || !(request.hasUserGesture || request.target != .current) {
+            // Navigations of the page itself stay in the app whatever the host
+            // (sign-in flows hop across hosts); links that ask for a new window,
+            // as chat sites do for links in answers, open in Safari.
+            if isWebLink, request.target == .current {
                 return .allow
             }
             UIApplication.shared.open(url, options: [:], completionHandler: nil)
@@ -475,7 +618,7 @@ final class SiteViewController: UIViewController, ContentDelegate, NavigationDel
     }
 
     func onNewSession(session: GeckoSession, uri: String, windowId: String, target: LoadRequestTarget) async -> GeckoSession? {
-        if case .external(let url) = configuration.route(for: uri) {
+        if case .external(let url) = site.route(for: uri) {
             UIApplication.shared.open(url, options: [:], completionHandler: nil)
             return nil
         }

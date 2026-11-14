@@ -1,0 +1,31 @@
+{
+  "manifest_version": 2,
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "claude-bridge@reynard.site"
+    }
+  },
+  "name": "Reynard Site Bridge",
+  "description": "Tells the site app when an AI chat site starts and finishes writing a response.",
+  "version": "1.1.0",
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "mozillaAddons",
+    "geckoViewAddons",
+    "nativeMessaging",
+    "nativeMessagingFromContent",
+    "webRequest",
+    "tabs",
+    "https://*/*"
+  ]
+}

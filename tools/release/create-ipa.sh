@@ -56,7 +56,7 @@ rm -rf "$WORK_DIR" "$ROOT_DIR/dist/$OUTPUT_NAME"
 mkdir -p "$WORK_DIR/Payload"
 cp -R "$APP_PATH" "$WORK_DIR/Payload/"
 
-if [ -n "${REYNARD_SITE_URL:-}" ]; then
+if [ -n "${REYNARD_SITES:-${REYNARD_SITE_URL:-}}" ]; then
 	"$ROOT_DIR/tools/site/customize-app.sh" "$WORK_DIR/Payload/Reynard.app"
 fi
 

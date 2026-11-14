@@ -22,3 +22,4 @@ browser/Reynard/JIT/RPPairing/libidevice_ffi.a
 
 # Single-site builds
 gecko-cache/
+__pycache__/

@@ -14,7 +14,6 @@ final class SitePopupViewController: UIViewController, ContentDelegate, Navigati
     private enum UX {
         static let barHeight: CGFloat = 44
         static let horizontalInset: CGFloat = 12
-        static let progressHeight: CGFloat = 2
     }
 
     let session: GeckoSession
@@ -24,7 +23,7 @@ final class SitePopupViewController: UIViewController, ContentDelegate, Navigati
     private let separator = UIView()
     private let titleLabel = UILabel()
     private let doneButton = UIButton(type: .system)
-    private let progressView = UIProgressView(progressViewStyle: .bar)
+    private let spinner = UIActivityIndicatorView(style: .medium)
     private let promptCoordinator = PromptCoordinator(presenter: PromptPresenter())
     private let permissionCoordinator = PermissionCoordinator(promptPresenter: PermissionPromptPresenter())
     private var keyboardBottomConstraint: NSLayoutConstraint?
@@ -73,7 +72,7 @@ final class SitePopupViewController: UIViewController, ContentDelegate, Navigati
     // MARK: - Layout
 
     private func configureHierarchy() {
-        [topBar, separator, titleLabel, doneButton, geckoView, progressView].forEach {
+        [topBar, separator, titleLabel, doneButton, geckoView, spinner].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
 
@@ -90,15 +89,14 @@ final class SitePopupViewController: UIViewController, ContentDelegate, Navigati
         doneButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
 
-        progressView.trackTintColor = .clear
-        progressView.alpha = 0
+        spinner.hidesWhenStopped = true
 
         view.addSubview(topBar)
         topBar.addSubview(titleLabel)
         topBar.addSubview(doneButton)
         view.addSubview(separator)
         view.addSubview(geckoView)
-        view.addSubview(progressView)
+        topBar.addSubview(spinner)
 
         let keyboardBottom = geckoView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         keyboardBottomConstraint = keyboardBottom
@@ -128,10 +126,8 @@ final class SitePopupViewController: UIViewController, ContentDelegate, Navigati
             geckoView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             keyboardBottom,
 
-            progressView.topAnchor.constraint(equalTo: geckoView.topAnchor),
-            progressView.leadingAnchor.constraint(equalTo: geckoView.leadingAnchor),
-            progressView.trailingAnchor.constraint(equalTo: geckoView.trailingAnchor),
-            progressView.heightAnchor.constraint(equalToConstant: UX.progressHeight),
+            spinner.trailingAnchor.constraint(equalTo: topBar.safeAreaLayoutGuide.trailingAnchor, constant: -UX.horizontalInset),
+            spinner.centerYAnchor.constraint(equalTo: doneButton.centerYAnchor),
         ])
     }
 
@@ -219,20 +215,13 @@ final class SitePopupViewController: UIViewController, ContentDelegate, Navigati
     // MARK: - ProgressDelegate
 
     func onPageStart(session: GeckoSession, url: String) {
-        progressView.setProgress(0.1, animated: false)
-        progressView.alpha = 1
+        spinner.startAnimating()
     }
-
-    func onProgressChange(session: GeckoSession, progress: Int) {
-        progressView.setProgress(Float(progress) / 100, animated: true)
-    }
-
+    
     func onPageStop(session: GeckoSession, success: Bool) {
-        UIView.animate(withDuration: 0.2) {
-            self.progressView.alpha = 0
-        }
+        spinner.stopAnimating()
     }
-
+    
     // MARK: - NavigationDelegate
 
     func onLocationChange(session: GeckoSession, url: String?, permissions: [ContentPermission]) {

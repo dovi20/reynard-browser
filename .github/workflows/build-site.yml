@@ -6,16 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: Website URL (https://...)
+        description: "Website URL (https://...). Several, comma separated, build a hub: Claude=https://claude.ai, ChatGPT=https://chatgpt.com"
         required: true
         type: string
       app_name:
-        description: Name under the home-screen icon (empty = site host)
+        description: Name under the home-screen icon (empty = site host, or "AI Hub" for a hub)
         required: false
         default: ''
         type: string
       bundle_id:
-        description: Bundle ID (empty = derived from the host, e.g. site.com.example)
+        description: Bundle ID (empty = derived from the host, e.g. site.com.example, or from the hub name)
         required: false
         default: ''
         type: string
@@ -39,7 +39,7 @@ permissions:
   contents: write  # publishes the prebuilt engine as a release asset
 
 concurrency:
-  group: site-app-${{ github.ref }}
+  group: site-app-${{ inputs.app_name }}-${{ inputs.site_url }}
   cancel-in-progress: false
 
 jobs:
@@ -68,26 +68,43 @@ jobs:
           BUNDLE_ID: ${{ inputs.bundle_id }}
         run: |
           set -eu
-          case "$SITE_URL" in
-            http://*|https://*) ;;
-            *) SITE_URL="https://$SITE_URL" ;;
-          esac
-          HOST="$(printf '%s' "$SITE_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/?#].*$##; s#:.*$##' | tr 'A-Z' 'a-z')"
-          SHORT_HOST="${HOST#www.}"
-          if [ -z "$BUNDLE_ID" ]; then
-            REVERSED="$(printf '%s' "$SHORT_HOST" | awk -F. '{for (i=NF; i>0; i--) printf "%s%s", $i, (i>1 ? "." : "")}')"
-            BUNDLE_ID="site.$(printf '%s' "$REVERSED" | sed -E 's/[^a-z0-9.-]/-/g')"
+          SITES="$(printf '%s' "$SITE_URL" | tr '\n;' ',,')"
+          SITE_COUNT="$(printf '%s\n' "$SITES" | tr ',' '\n' | grep -c '[^[:space:]]' || true)"
+          slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9.-]+/-/g; s/^-+//; s/-+$//'; }
+
+          if [ "$SITE_COUNT" -gt 1 ]; then
+            # Hub: identity comes from the app name
+            APP_NAME="${APP_NAME:-AI Hub}"
+            NAME_SLUG="$(slug "$APP_NAME")"
+            if [ -z "$NAME_SLUG" ]; then NAME_SLUG="hub"; fi
+            if [ -z "$BUNDLE_ID" ]; then BUNDLE_ID="site.hub.$NAME_SLUG"; fi
+            OUTPUT_BASENAME="$NAME_SLUG"
+          else
+            ENTRY="$(printf '%s' "$SITES" | tr -d ',' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+            URL="$(printf '%s' "$ENTRY" | sed -E 's#^[^=/?]*=[[:space:]]*##')"
+            case "$URL" in
+              http://*|https://*) ;;
+              *) URL="https://$URL" ;;
+            esac
+            HOST="$(printf '%s' "$URL" | sed -E 's#^[a-zA-Z]+://##; s#[/?#].*$##; s#:.*$##' | tr 'A-Z' 'a-z')"
+            SHORT_HOST="${HOST#www.}"
+            if [ -z "$BUNDLE_ID" ]; then
+              REVERSED="$(printf '%s' "$SHORT_HOST" | awk -F. '{for (i=NF; i>0; i--) printf "%s%s", $i, (i>1 ? "." : "")}')"
+              BUNDLE_ID="site.$(printf '%s' "$REVERSED" | sed -E 's/[^a-z0-9.-]/-/g')"
+            fi
+            APP_NAME="${APP_NAME:-$SHORT_HOST}"
+            OUTPUT_BASENAME="$(slug "$SHORT_HOST")"
           fi
-          OUTPUT_BASENAME="$(printf '%s' "$SHORT_HOST" | sed -E 's/[^a-z0-9.-]/-/g')"
           {
-            echo "site_url=$SITE_URL"
-            echo "app_name=${APP_NAME:-$SHORT_HOST}"
+            echo "sites=$SITES"
+            echo "app_name=$APP_NAME"
             echo "bundle_id=$BUNDLE_ID"
             echo "output_basename=$OUTPUT_BASENAME"
           } >> "$GITHUB_OUTPUT"
-          echo "Site: $SITE_URL"
-          echo "Name: ${APP_NAME:-$SHORT_HOST}"
+          echo "Sites: $SITES"
+          echo "Name: $APP_NAME"
           echo "Bundle ID: $BUNDLE_ID"
+          echo "Output: $OUTPUT_BASENAME-TrollStore.tipa"
 
       - name: Set up latest Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -249,9 +266,9 @@ jobs:
 
       - name: Set app icon
         env:
-          SITE_URL: ${{ steps.identity.outputs.site_url }}
+          SITES: ${{ steps.identity.outputs.sites }}
           ICON_URL: ${{ inputs.icon_url }}
-        run: python3 tools/site/set-icon.py "$SITE_URL" "$ICON_URL"
+        run: python3 tools/site/set-icon.py --sites "$SITES" --icon "$ICON_URL" --export "$RUNNER_TEMP/site-icons"
 
       - name: Build app
         run: |
@@ -280,8 +297,9 @@ jobs:
 
       - name: Create TrollStore TIPA
         env:
-          REYNARD_SITE_URL: ${{ steps.identity.outputs.site_url }}
+          REYNARD_SITES: ${{ steps.identity.outputs.sites }}
           REYNARD_SITE_NAME: ${{ steps.identity.outputs.app_name }}
+          REYNARD_SITE_ICONS_DIR: ${{ runner.temp }}/site-icons
           REYNARD_SITE_ALLOWED_HOSTS: ${{ inputs.allowed_hosts }}
           REYNARD_SITE_EXTERNAL_LINKS: ${{ inputs.external_links_in_safari }}
           REYNARD_BUNDLE_ID: ${{ steps.identity.outputs.bundle_id }}
@@ -302,7 +320,8 @@ jobs:
           plutil -p "$APP/PlugIns/Reynard Helper.appex/Info.plist" | grep CFBundleIdentifier
           ls "$APP/PlugIns"
           test -x "$APP/ts_ptrace_jit"
-          grep '"id"' "$APP/Frameworks/GeckoView.framework/Frameworks/extensions/readerview/manifest.json" || true
+          grep -E '"(id|version)"' "$APP/Frameworks/GeckoView.framework/Frameworks/extensions/readerview/manifest.json" || true
+          ls "$APP/SiteIcons" || true
           ldid -e "$APP/Reynard" | grep -A1 application-identifier
           ldid -e "$APP/PlugIns/Reynard Helper.appex/Reynard Helper" | grep -A1 application-identifier
 
@@ -319,7 +338,7 @@ jobs:
         env:
           OUTPUT_BASENAME: ${{ steps.identity.outputs.output_basename }}
           APP_NAME: ${{ steps.identity.outputs.app_name }}
-          SITE_URL: ${{ steps.identity.outputs.site_url }}
+          SITE_URL: ${{ steps.identity.outputs.sites }}
         run: |
           TAG="app-$OUTPUT_BASENAME"
           TIPA="dist/$OUTPUT_BASENAME-TrollStore.tipa"

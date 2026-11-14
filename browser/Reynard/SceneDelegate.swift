@@ -13,8 +13,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = (scene as? UIWindowScene) else { return }
         
-        if let siteConfiguration = SiteConfiguration.current {
-            let siteViewController = SiteViewController(configuration: siteConfiguration)
+        if SiteCatalog.isSiteApp {
+            let siteViewController = SiteRootViewController()
             siteViewController.setApplicationForeground(scene.activationState != .background)
             
             let window = UIWindow(windowScene: windowScene)
@@ -45,7 +45,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneDidDisconnect(_ scene: UIScene) {}
     
     func sceneDidBecomeActive(_ scene: UIScene) {
-        if let siteViewController = window?.rootViewController as? SiteViewController {
+        if let siteViewController = window?.rootViewController as? SiteRootViewController {
             siteViewController.applicationDidBecomeActive()
             return
         }
@@ -60,7 +60,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     
     func sceneWillResignActive(_ scene: UIScene) {
-        if let siteViewController = window?.rootViewController as? SiteViewController {
+        if let siteViewController = window?.rootViewController as? SiteRootViewController {
             siteViewController.applicationWillResignActive()
             return
         }
@@ -84,13 +84,13 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     
     func sceneWillEnterForeground(_ scene: UIScene) {
-        (window?.rootViewController as? SiteViewController)?.setApplicationForeground(true)
+        (window?.rootViewController as? SiteRootViewController)?.setApplicationForeground(true)
         (window?.rootViewController as? BrowserViewController)?
             .sessionManager.setApplicationForeground(true)
     }
     
     func sceneDidEnterBackground(_ scene: UIScene) {
-        (window?.rootViewController as? SiteViewController)?.setApplicationForeground(false)
+        (window?.rootViewController as? SiteRootViewController)?.setApplicationForeground(false)
         (window?.rootViewController as? BrowserViewController)?
             .sessionManager.setApplicationForeground(false)
     }
@@ -103,7 +103,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     
     private func handleIncomingURL(_ incomingURL: URL) {
-        if let siteViewController = window?.rootViewController as? SiteViewController {
+        if let siteViewController = window?.rootViewController as? SiteRootViewController {
             if let resolvedURL = resolvedBrowserURL(from: incomingURL) {
                 DispatchQueue.main.async {
                     siteViewController.open(resolvedURL)
