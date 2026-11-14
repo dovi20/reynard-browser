@@ -1,8 +1,7 @@
 name: Build Nightly
 
 on:
-  schedule:
-    - cron: '0 18 * * *'
+  # The daily schedule is upstream's; this fork only builds site apps on request
   workflow_dispatch:
     inputs:
       build_normal_ipa:

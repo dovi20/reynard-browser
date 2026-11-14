@@ -1,8 +1,7 @@
 name: Update Source
 
 on:
-  release:
-    types: [published]
+  # Upstream runs this on every release; here releases only carry site apps
   workflow_dispatch:
 
 jobs:
